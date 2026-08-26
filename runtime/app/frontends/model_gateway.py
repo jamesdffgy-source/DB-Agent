@@ -1,4 +1,4 @@
-"""Purpose-built OpenAI-compatible model transport for DB-Agent.
+"""Purpose-built OpenAI-compatible model transport for DBQuill.
 
 This module has one job: turn a prompt into text through a selected local model
 profile.  It does not expose a tool runtime, autonomous loop, or general-purpose
@@ -226,7 +226,7 @@ def _request_text(
 
                 watcher = threading.Thread(
                     target=close_after_cancel,
-                    name="DBAgent-Model-Cancel",
+                    name="DBQuill-Model-Cancel",
                     daemon=True,
                 )
                 watcher.start()

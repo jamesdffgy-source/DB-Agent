@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DB-Agent database operation core.
+"""DBQuill database operation core.
 
 Natural-language requests are mapped to a typed operation plan and then routed
 through schema, semantic, authorization, and execution boundaries:
@@ -22,7 +22,7 @@ profiles, and the purpose-built model gateway are separate components.
   RagRetriever     —— 表/列语义 + 值域 → 关键词/FTS 召回 → LLM 组织自然语言回答
   IntentRouter     —— LLM 判断三意图 + 置信度
   OperationGraph   —— 自研只读 DAG（依赖校验、拓扑执行、部分失败降级）
-  DBAgent          —— 总入口：一问一答，路由到对应执行器
+  DBQuillAgent          —— 总入口：一问一答，路由到对应执行器
 """
 from __future__ import annotations
 
@@ -70,7 +70,8 @@ class TimezoneRuntime:
     TZDATA_VERSION = str(_ACTIVE_RELEASE.get("tzdata_version") or "")
     IANA_VERSION = str(_ACTIVE_RELEASE.get("iana_version") or "")
     VERSION_TOKEN = f"tzdata-{TZDATA_VERSION}/iana-{IANA_VERSION}"
-    SQL_FUNCTION = "dbagent_iana_date"
+    SQL_FUNCTION = "dbquill_iana_date"
+    LEGACY_SQL_FUNCTION = "dbagent_iana_date"
 
     @staticmethod
     @lru_cache(maxsize=128)
@@ -215,6 +216,14 @@ class TimezoneRuntime:
             cls.utc_to_local_date,
             deterministic=True,
         )
+        # v0.1 generated SQL may still reference the former UDF name. Register
+        # it as a compatibility alias while all newly rendered SQL uses DBQuill.
+        conn.create_function(
+            cls.LEGACY_SQL_FUNCTION,
+            3,
+            cls.utc_to_local_date,
+            deterministic=True,
+        )
 
 # ---------------------------------------------------------------------------
 # 数据类（统一的数据载体，供 bridge / 前端 / 各执行器共享）
@@ -234,6 +243,7 @@ class DBColumn:
     description: str = ""               # 可选列定义；只在与当前问题相关时进入模型上下文
     value_description: str = ""         # 可选值域说明；只截取与当前问题相关的片段
     default_sql: str = ""               # SQLite schema default expression; empty means no default
+    automatic: bool = False              # identity / auto-increment column that may be omitted on INSERT
 
 
 def is_time_column(column: DBColumn) -> bool:
@@ -2526,7 +2536,7 @@ class RelationalAggregate:
     function: str
     source_table: str
     column: str = "*"
-    alias: str = "__dbagent_measure"
+    alias: str = "__dbquill_measure"
     distinct: bool = False
 
     def as_dict(self) -> dict:
@@ -2848,38 +2858,38 @@ class DBAnswer:
 # 异常体系（分层，便于 bridge 转 HTTP 状态码）
 # ---------------------------------------------------------------------------
 
-class DBAgentError(Exception):
-    """DB Agent 基异常。"""
+class DBQuillError(Exception):
+    """DBQuill 基异常。"""
     status_code = 500
 
 
-class LLMServiceError(DBAgentError):
+class LLMServiceError(DBQuillError):
     """LLM 通道已完成内部重试后返回的终态服务错误。"""
     status_code = 502
 
 
-class SchemaDiscoveryError(DBAgentError):
+class SchemaDiscoveryError(DBQuillError):
     status_code = 500
 
 
-class SQLSecurityError(DBAgentError):
+class SQLSecurityError(DBQuillError):
     """SQL 安全拦截（写操作/多语句/危险函数等）。"""
     status_code = 400
 
 
-class NL2SQLError(DBAgentError):
+class NL2SQLError(DBQuillError):
     status_code = 500
 
 
-class IntentRouterError(DBAgentError):
+class IntentRouterError(DBQuillError):
     status_code = 500
 
 
-class RAGError(DBAgentError):
+class RAGError(DBQuillError):
     status_code = 500
 
 
-class OrchestratorError(DBAgentError):
+class OrchestratorError(DBQuillError):
     status_code = 500
 
 
@@ -2892,6 +2902,8 @@ class DBConnector:
 
     def __init__(self, db_path: str):
         self.db_path = str(Path(db_path).resolve())
+        self.dialect = "sqlite"
+        self.write_enabled = True
 
     def connect(self) -> sqlite3.Connection:
         """打开只读连接（每次调用返回新连接，调用方负责 close）。"""
@@ -2931,6 +2943,26 @@ class DBConnector:
         except sqlite3.Error as e:
             raise SchemaDiscoveryError(f"打开可写连接失败: {e}") from e
 
+    @staticmethod
+    def quote_identifier(name: str) -> str:
+        return '"' + str(name).replace('"', '""') + '"'
+
+    @staticmethod
+    def begin_rw(conn: sqlite3.Connection) -> None:
+        conn.execute("BEGIN")
+
+    @staticmethod
+    def execute_rw(conn: sqlite3.Connection, sql: str, params=None):
+        return conn.execute(sql, params or ())
+
+    @staticmethod
+    def commit_rw(conn: sqlite3.Connection) -> None:
+        conn.commit()
+
+    @staticmethod
+    def rollback_rw(conn: sqlite3.Connection) -> None:
+        conn.rollback()
+
     def close(self, conn: Optional[sqlite3.Connection]) -> None:
         if conn is not None:
             try:
@@ -2948,10 +2980,11 @@ class DBConnector:
 
 
 class RemoteDBConnector:
-    """远程数据库只读连接工厂：mysql(pymysql) / postgresql(psycopg2)。
+    """远程数据库双通道连接工厂：mysql(pymysql) / postgresql(psycopg2)。
 
-    与 DBConnector 同接口（connect/close/db_path/dialect），供 SchemaDiscovery/
-    SQLSecurity 无差别使用；只读由连接参数保证（PG read_only、MySQL 连接用户权限）。
+    ``connect()`` 永远建立只读会话，供发现和查询使用。只有配置显式设置
+    ``write_enabled`` 时，``connect_rw()`` 才建立事务型读写会话；这避免为了
+    支持确认后的 DML 而削弱日常查询路径的物理只读边界。
     """
 
     def __init__(self, cfg: dict):
@@ -2959,6 +2992,10 @@ class RemoteDBConnector:
         self.dialect = (self.cfg.get("dialect") or "mysql").lower()
         if self.dialect not in ("mysql", "postgresql"):
             raise ValueError(f"unsupported dialect: {self.dialect}")
+        raw_write_enabled = self.cfg.get("write_enabled", False)
+        self.write_enabled = raw_write_enabled is True or str(raw_write_enabled).strip().lower() in {
+            "1", "true", "yes", "on",
+        }
         self.db_path = (
             f"{self.dialect}://{self.cfg.get('host', '')}:{self.cfg.get('port', '')}"
             f"/{self.cfg.get('database', '')}"
@@ -2976,12 +3013,28 @@ class RemoteDBConnector:
                 connect_timeout=5, read_timeout=15, charset="utf8mb4",
                 autocommit=True,
             )
-            try:  # 尽力只读会话（老版本无此变量则静默）
-                cur = conn.cursor()
-                cur.execute("SET SESSION transaction_read_only = 1")
-                cur.close()
-            except Exception:
-                pass
+            read_only_enabled = False
+            for variable in ("transaction_read_only", "tx_read_only"):
+                cur = None
+                try:
+                    cur = conn.cursor()
+                    cur.execute(f"SET SESSION {variable} = 1")
+                    cur.execute(f"SELECT @@SESSION.{variable}")
+                    row = cur.fetchone()
+                    read_only_enabled = bool(row and int(row[0]) == 1)
+                    if read_only_enabled:
+                        break
+                except Exception:
+                    continue
+                finally:
+                    try:
+                        if cur is not None:
+                            cur.close()
+                    except Exception:
+                        pass
+            if not read_only_enabled:
+                conn.close()
+                raise SchemaDiscoveryError("MySQL 会话无法强制进入只读模式")
             return conn
         import psycopg2  # noqa: PLC0415
         return psycopg2.connect(
@@ -2993,6 +3046,69 @@ class RemoteDBConnector:
             connect_timeout=5,
             options="-c default_transaction_read_only=on -c statement_timeout=15000",
         )
+
+    def connect_rw(self):
+        """Open a transaction-scoped write connection after explicit opt-in."""
+        if not self.write_enabled:
+            raise WriteSecurityError("远程数据库未启用受控写入，请以读写模式重新连接")
+        if self.dialect == "mysql":
+            import pymysql  # noqa: PLC0415
+            return pymysql.connect(
+                host=self.cfg.get("host") or "127.0.0.1",
+                port=int(self.cfg.get("port") or 3306),
+                user=self.cfg.get("user") or "",
+                password=self.cfg.get("password") or "",
+                database=self.cfg.get("database") or "",
+                connect_timeout=5,
+                read_timeout=15,
+                write_timeout=15,
+                charset="utf8mb4",
+                autocommit=False,
+            )
+        import psycopg2  # noqa: PLC0415
+        conn = psycopg2.connect(
+            host=self.cfg.get("host") or "127.0.0.1",
+            port=int(self.cfg.get("port") or 5432),
+            user=self.cfg.get("user") or "",
+            password=self.cfg.get("password") or "",
+            dbname=self.cfg.get("database") or "",
+            connect_timeout=5,
+            options="-c statement_timeout=15000 -c lock_timeout=5000",
+        )
+        conn.autocommit = False
+        return conn
+
+    def quote_identifier(self, name: str) -> str:
+        if self.dialect == "mysql":
+            return "`" + str(name).replace("`", "``") + "`"
+        return '"' + str(name).replace('"', '""') + '"'
+
+    @staticmethod
+    def begin_rw(conn) -> None:
+        # DB-API drivers start a transaction at the first statement. Rolling
+        # back first also clears any driver-created setup transaction.
+        conn.rollback()
+
+    @staticmethod
+    def execute_rw(conn, sql: str, params=None):
+        cur = conn.cursor()
+        try:
+            cur.execute(sql, params) if params is not None else cur.execute(sql)
+            return cur
+        except Exception:
+            try:
+                cur.close()
+            except Exception:
+                pass
+            raise
+
+    @staticmethod
+    def commit_rw(conn) -> None:
+        conn.commit()
+
+    @staticmethod
+    def rollback_rw(conn) -> None:
+        conn.rollback()
 
     def close(self, conn) -> None:
         if conn is not None:
@@ -3135,7 +3251,8 @@ class SchemaDiscovery:
                     "ORDER BY table_name"
                 )
                 col_sql = (
-                    "SELECT column_name, data_type, is_nullable, column_key "
+                    "SELECT column_name, data_type, is_nullable, column_key, "
+                    "column_default, extra "
                     "FROM information_schema.columns WHERE table_schema = DATABASE() "
                     "AND table_name = %s ORDER BY ordinal_position"
                 )
@@ -3153,7 +3270,8 @@ class SchemaDiscovery:
                     "ORDER BY table_name"
                 )
                 col_sql = (
-                    "SELECT column_name, data_type, is_nullable, '' "
+                    "SELECT column_name, data_type, is_nullable, '', "
+                    "column_default, is_identity "
                     "FROM information_schema.columns "
                     "WHERE table_schema = 'public' AND table_name = %s "
                     "ORDER BY ordinal_position"
@@ -3205,12 +3323,23 @@ class SchemaDiscovery:
                 try:
                     table = DBTable(name=tname, create_sql="")
                     cur.execute(col_sql, (tname,))
-                    for cname, ctype, nullable, ckey in cur.fetchall():
+                    for raw_column in cur.fetchall():
+                        cname, ctype, nullable, ckey = raw_column[:4]
+                        default_sql = raw_column[4] if len(raw_column) > 4 else None
+                        generated = raw_column[5] if len(raw_column) > 5 else ""
+                        automatic = (
+                            "auto_increment" in str(generated or "").casefold()
+                            if dialect == "mysql"
+                            else str(generated or "").upper() == "YES"
+                            or "nextval(" in str(default_sql or "").casefold()
+                        )
                         table.columns.append(DBColumn(
                             name=str(cname),
                             type=str(ctype or "TEXT"),
                             nullable=(str(nullable).upper() == "YES"),
                             pk=(str(ckey).upper() == "PRI"),
+                            default_sql="" if default_sql is None else str(default_sql),
+                            automatic=automatic,
                         ))
                     if pk_sql:
                         cur.execute(pk_sql, (tname,))
@@ -3277,6 +3406,7 @@ class SchemaDiscovery:
                 nullable=not notnull,
                 pk=bool(pk),
                 default_sql="" if dflt is None else str(dflt),
+                automatic=bool(pk and str(ctype or "").strip().upper() == "INTEGER"),
             ))
         # 外键：PRAGMA foreign_key_list 每行 (id, seq, table, from, to, on_update, on_delete, match)
         fk_map: Dict[str, tuple] = {}
@@ -4018,33 +4148,33 @@ class SQLiteRelationalPlanRenderer:
             )
 
         inner_projection = ", ".join(
-            f"{column_sql(ref)} AS {q(f'__dbagent_out_{index}')}"
+            f"{column_sql(ref)} AS {q(f'__dbquill_out_{index}')}"
             for index, ref in enumerate(plan.projections)
         )
         inner_keys = ", ".join(
-            f"{column_sql(ref)} AS {q(f'__dbagent_key_{index}')}"
+            f"{column_sql(ref)} AS {q(f'__dbquill_key_{index}')}"
             for index, ref in enumerate(plan.group_keys)
         )
         final_projection = ", ".join(
-            f"{q(f'__dbagent_out_{index}')} AS {q(ref.column)}"
+            f"{q(f'__dbquill_out_{index}')} AS {q(ref.column)}"
             for index, ref in enumerate(plan.projections)
         )
         final_order = ", ".join(
-            f"{q(f'__dbagent_key_{index}')} ASC"
+            f"{q(f'__dbquill_key_{index}')} ASC"
             for index, _ref in enumerate(plan.group_keys)
         )
         extremum = "MAX" if direction == "DESC" else "MIN"
         return (
-            f"WITH {q('__dbagent_grouped')} AS (\n"
+            f"WITH {q('__dbquill_grouped')} AS (\n"
             f"  SELECT {inner_projection}, {inner_keys}, "
             f"{aggregate_sql} AS {q(plan.aggregate.alias)}\n"
             f"  {from_clause.replace(chr(10), chr(10) + '  ')}"
             f"{filter_clause.replace(chr(10), chr(10) + '  ')}\n"
             f"  GROUP BY {group_keys}\n"
-            f")\nSELECT {final_projection}\nFROM {q('__dbagent_grouped')}\n"
+            f")\nSELECT {final_projection}\nFROM {q('__dbquill_grouped')}\n"
             f"WHERE {q(plan.aggregate.alias)} = "
             f"(SELECT {extremum}({q(plan.aggregate.alias)}) "
-            f"FROM {q('__dbagent_grouped')})\nORDER BY {final_order}"
+            f"FROM {q('__dbquill_grouped')})\nORDER BY {final_order}"
         )
 
     def _render_grouped_aggregate(
@@ -4507,7 +4637,7 @@ class CalendarFilterCompiler:
         holiday_table = calendar.get("holiday_table")
         if not holiday_table:
             return f"({weekday})"
-        alias = "__dbagent_calendar_h"
+        alias = "__dbquill_calendar_h"
         q = self.quote_identifier
         match = (
             f"date({q(alias)}.{q(calendar['holiday_date_column'])}) = {day_expr}"
@@ -5774,7 +5904,7 @@ class DeterministicTrendQueryExecutor:
         )
 
 
-class WriteSecurityError(DBAgentError):
+class WriteSecurityError(DBQuillError):
     """写 SQL 安全拦截（多语句/危险操作/无 WHERE 等）。"""
     status_code = 400
 
@@ -5980,7 +6110,7 @@ class WriteConfirmationRegistry:
             return {"pending": len(self._pending), "ttl_s": self.ttl}
 
 
-# 模块级单例：bridge 与 DBAgent 共享同一确认注册表
+# 模块级单例：bridge 与 DBQuillAgent 共享同一确认注册表
 WRITE_REGISTRY = WriteConfirmationRegistry()
 
 
@@ -5989,7 +6119,7 @@ class WritePreviewer:
 
     DML(INSERT/UPDATE/DELETE)：先 SELECT 命中行(前值) → 事务内执行 → SELECT 受影响行(后值) → 回滚
     DDL(CREATE/ALTER/DROP)：事务内执行 → 采集变更后结构(sqlite_master/PRAGMA table_info) → 回滚
-    （SQLite 的 DDL 是事务性的，同样可安全回滚）
+    SQLite DDL 可事务回滚；远程数据库只预览 DML，避免 MySQL DDL 隐式提交。
     """
 
     def __init__(
@@ -6009,14 +6139,15 @@ class WritePreviewer:
         if self.allowed_columns and self.allowed_tables is None:
             raise ValueError("字段级授权必须建立在显式表级授权之上")
 
-    def _install_table_authorizer(self, conn: sqlite3.Connection) -> None:
-        _install_sqlite_scope_authorizer(
-            conn,
-            allowed_tables=self.allowed_tables,
-            allowed_columns=self.allowed_columns,
-            allow_writes=True,
-            unavailable_error="当前连接无法安全执行表/字段级授权写入",
-        )
+    def _install_table_authorizer(self, conn) -> None:
+        if isinstance(self.connector, DBConnector):
+            _install_sqlite_scope_authorizer(
+                conn,
+                allowed_tables=self.allowed_tables,
+                allowed_columns=self.allowed_columns,
+                allow_writes=True,
+                unavailable_error="当前连接无法安全执行表/字段级授权写入",
+            )
 
     def preview(self, sql: str, meta: dict) -> dict:
         """执行 dry-run，返回前后对比预览数据（不落库）。"""
@@ -6027,6 +6158,8 @@ class WritePreviewer:
             self._install_table_authorizer(conn)
             if kind in ("INSERT", "UPDATE", "DELETE"):
                 return self._preview_dml(conn, sql, kind, table)
+            if isinstance(self.connector, RemoteDBConnector):
+                raise WriteSecurityError("远程 MySQL/PostgreSQL 仅开放 INSERT/UPDATE/DELETE；DDL 不支持回滚预览")
             return self._preview_ddl(conn, sql, kind, table)
         finally:
             self.connector.close(conn)
@@ -6036,40 +6169,48 @@ class WritePreviewer:
         where = self._extract_where(sql)
         projection = self._preview_projection(table)
         before = {"columns": [], "rows": []}
-        if kind in ("UPDATE", "DELETE") and where and table:
-            try:
-                cur = conn.execute(
-                    f'SELECT {projection} FROM "{table}" WHERE {where} '
-                    f'LIMIT {self.max_preview_rows + 1}'
+        quoted_table = self.connector.quote_identifier(table) if table else ""
+        self.connector.begin_rw(conn)
+        try:
+            if kind in ("UPDATE", "DELETE") and where and table:
+                cur = self.connector.execute_rw(
+                    conn,
+                    f"SELECT {projection} FROM {quoted_table} WHERE {where} "
+                    f"LIMIT {self.max_preview_rows + 1}",
                 )
                 before = self._collect(cur)
-            except Exception:
-                before = {"columns": [], "rows": []}
 
-        conn.execute("BEGIN")
-        try:
-            cur = conn.execute(sql)
+            cur = self.connector.execute_rw(conn, sql)
             rowcount = cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else 0
+            lastrowid = getattr(cur, "lastrowid", None)
+            self._close_cursor(cur)
 
             after = {"columns": [], "rows": []}
             if kind == "UPDATE" and where and table:
-                cur = conn.execute(
-                    f'SELECT {projection} FROM "{table}" WHERE {where} '
-                    f'LIMIT {self.max_preview_rows + 1}'
+                cur = self.connector.execute_rw(
+                    conn,
+                    f"SELECT {projection} FROM {quoted_table} WHERE {where} "
+                    f"LIMIT {self.max_preview_rows + 1}",
                 )
                 after = self._collect(cur)
-            elif kind == "INSERT" and table and table.casefold() not in self.allowed_columns:
+            elif kind == "INSERT" and table and table.casefold() not in self.allowed_columns \
+                    and isinstance(self.connector, DBConnector):
                 try:
-                    cur = conn.execute(
-                        f'SELECT * FROM "{table}" WHERE rowid = ?', (cur.lastrowid,)
+                    cur = self.connector.execute_rw(
+                        conn,
+                        f"SELECT * FROM {quoted_table} WHERE rowid = ?", (lastrowid,),
                     )
                     after = self._collect(cur)
                 except Exception:
-                    cur = conn.execute(f'SELECT * FROM "{table}" ORDER BY rowid DESC LIMIT 1')
+                    cur = self.connector.execute_rw(
+                        conn, f"SELECT * FROM {quoted_table} ORDER BY rowid DESC LIMIT 1",
+                    )
                     after = self._collect(cur)
+            elif kind == "INSERT" and isinstance(self.connector, RemoteDBConnector):
+                after["unavailable_reason"] = "远程预览不重新定位自增记录；确认卡仍展示目标表、SQL 和影响行数"
             # DELETE: after 保持空（行已删）
         finally:
-            conn.execute("ROLLBACK")
+            self.connector.rollback_rw(conn)
 
         return {
             "kind": kind,
@@ -6083,12 +6224,13 @@ class WritePreviewer:
     # ---- DDL ----
     def _preview_ddl(self, conn, sql, kind, table):
         before = self._describe(conn, table)
-        conn.execute("BEGIN")
+        self.connector.begin_rw(conn)
         try:
-            conn.execute(sql)
+            cur = self.connector.execute_rw(conn, sql)
+            self._close_cursor(cur)
             after = self._describe(conn, table)
         finally:
-            conn.execute("ROLLBACK")
+            self.connector.rollback_rw(conn)
         return {
             "kind": kind,
             "table": table,
@@ -6100,10 +6242,20 @@ class WritePreviewer:
 
     # ---- utils ----
     def _collect(self, cur):
-        cols = [d[0] for d in cur.description] if cur.description else []
-        rows = [self._safe_row(r) for r in cur.fetchmany(self.max_preview_rows + 1)]
-        truncated = len(rows) > self.max_preview_rows
-        return {"columns": cols, "rows": rows[: self.max_preview_rows], "truncated": truncated}
+        try:
+            cols = [d[0] for d in cur.description] if cur.description else []
+            rows = [self._safe_row(r) for r in cur.fetchmany(self.max_preview_rows + 1)]
+            truncated = len(rows) > self.max_preview_rows
+            return {"columns": cols, "rows": rows[: self.max_preview_rows], "truncated": truncated}
+        finally:
+            self._close_cursor(cur)
+
+    @staticmethod
+    def _close_cursor(cur) -> None:
+        try:
+            cur.close()
+        except Exception:
+            pass
 
     @staticmethod
     def _safe_row(row):
@@ -6126,10 +6278,7 @@ class WritePreviewer:
         columns = self.allowed_columns.get(str(table or "").casefold())
         if columns is None:
             return "*"
-        return ", ".join(
-            '"' + column.replace('"', '""') + '"'
-            for column in sorted(columns)
-        )
+        return ", ".join(self.connector.quote_identifier(column) for column in sorted(columns))
 
     def _describe(self, conn, table):
         """采集表/视图/索引定义 + 列结构（DROP 后 exists=False）。"""
@@ -6175,6 +6324,11 @@ def _prepare_write_proposal(
             narrative=f"写操作被安全拦截：{exc}",
             error=str(exc),
         )
+    if isinstance(connector, RemoteDBConnector) and meta["kind"] not in {
+        "INSERT", "UPDATE", "DELETE",
+    }:
+        message = "远程 MySQL/PostgreSQL 仅开放 INSERT/UPDATE/DELETE；DDL 不支持回滚预览"
+        return DBAnswer(kind="error", narrative=f"写操作被安全拦截：{message}", error=message)
     try:
         preview = previewer.preview(sql, meta)
     except Exception as exc:  # noqa: BLE001 -- preview failure never mutates
@@ -6251,8 +6405,10 @@ class StructuredInsertWorkflow:
         return missing in {"target_table", "record_values"}
 
     def _ensure_available(self) -> None:
-        if not isinstance(self.connector, DBConnector):
-            raise WriteSecurityError("表格式写入目前只对已验证的本地 SQLite 数据库开放")
+        if isinstance(self.connector, RemoteDBConnector) and not self.connector.write_enabled:
+            raise WriteSecurityError("远程数据库未启用受控写入，请以读写模式重新连接")
+        if not isinstance(self.connector, (DBConnector, RemoteDBConnector)):
+            raise WriteSecurityError("当前数据库连接器不支持表格式写入")
         if self.write_security.row_filters:
             raise WriteSecurityError("行级授权凭据固定为只读，不能打开写入表单")
 
@@ -6268,9 +6424,8 @@ class StructuredInsertWorkflow:
             raise WriteSecurityError("目标表不存在或不在当前授权范围内")
         return matches[0]
 
-    @staticmethod
-    def _quoted_identifier(name: str) -> str:
-        return '"' + str(name).replace('"', '""') + '"'
+    def _quoted_identifier(self, name: str) -> str:
+        return self.connector.quote_identifier(name)
 
     @staticmethod
     def _auto_integer_primary_key(table: DBTable, column: DBColumn) -> bool:
@@ -6278,7 +6433,7 @@ class StructuredInsertWorkflow:
         return bool(
             len(primary_keys) == 1
             and column.pk
-            and str(column.type or "").strip().upper() == "INTEGER"
+            and column.automatic
         )
 
     def _column_spec(self, table: DBTable, column: DBColumn) -> dict:
@@ -6430,7 +6585,12 @@ class StructuredInsertWorkflow:
             values_sql = ", ".join(_sqlite_literal(value) for value in values)
             sql = f"INSERT INTO {quoted_table} ({columns_sql}) VALUES ({values_sql})"
         else:
-            sql = f"INSERT INTO {quoted_table} DEFAULT VALUES"
+            sql = (
+                f"INSERT INTO {quoted_table} () VALUES ()"
+                if isinstance(self.connector, RemoteDBConnector)
+                and self.connector.dialect == "mysql"
+                else f"INSERT INTO {quoted_table} DEFAULT VALUES"
+            )
         return _prepare_write_proposal(
             self.connector,
             self.write_security,
@@ -7839,7 +7999,7 @@ class NL2SQLExecutor:
         )
         try:
             payload = _llm_ask_json(prompt, self.llm_cfg)
-        except DBAgentError as exc:
+        except DBQuillError as exc:
             return {
                 "status": "unavailable",
                 "decision": "accept",
@@ -13685,7 +13845,7 @@ class NL2SQLExecutor:
                     kind = str(expected.get("kind") or "")
                     if kind == "column":
                         observed = self._simple_projection_columns(
-                            f"SELECT {item} FROM __dbagent_projection_scope"
+                            f"SELECT {item} FROM __dbquill_projection_scope"
                         )
                         if observed != [str(expected.get("column") or "").casefold()]:
                             layout_matches = False
@@ -15271,7 +15431,7 @@ class NL2SQLExecutor:
                 # 模型网关已完成网络重试；余额、鉴权、配置和终态传输错误
                 # 再做整轮 NL2SQL 自纠错不会改变结果，直接准确上报。
                 return DBAnswer(kind="error", narrative=str(e), error=str(e))
-            except DBAgentError as e:
+            except DBQuillError as e:
                 if attempt >= max_retry:
                     return DBAnswer(kind="error", narrative=str(e), error=str(e))
                 last_error = str(e)
@@ -15373,7 +15533,7 @@ class NL2SQLExecutor:
                             )
                         except LLMServiceError as exc:
                             return DBAnswer(kind="error", narrative=str(exc), error=str(exc))
-                        except DBAgentError as exc:
+                        except DBQuillError as exc:
                             return DBAnswer(kind="error", narrative=str(exc), error=str(exc))
                 if search is not None:
                     candidate_search_step = search["diagnostic"]
@@ -15533,18 +15693,19 @@ class NL2SQLExecutor:
 class NL2WriteExecutor:
     """自然语言 → 写 SQL → WriteSecurity 校验 → dry-run 预览 → WriteProposal（不落库）。
 
-    只产出"待确认提案"，绝不直接执行；用户批准由 DBAgent.confirm_write 完成。
+    只产出"待确认提案"，绝不直接执行；用户批准由 DBQuillAgent.confirm_write 完成。
     """
 
     _SYSTEM_PROMPT = (
-        "你是 sqlite 数据库操作助手。根据下面的数据库结构，把用户的操作意图翻译成一条写 SQL。\n"
+        "你是 {dialect} 数据库操作助手。根据下面的数据库结构，把用户的操作意图翻译成一条写 SQL。\n"
         "规则：\n"
-        "1. 只生成单条写 SQL（INSERT/UPDATE/DELETE/CREATE TABLE/ALTER TABLE/DROP TABLE 之一），"
+        "1. 只生成单条允许的写 SQL（{allowed_operations} 之一），"
         "严禁输出多条语句，严禁用分号分隔多条 SQL，sql 字段内不得包含 SELECT/注释/空语句\n"
         "2. UPDATE/DELETE 必须带 WHERE 条件，禁止无界更新/删除；批量修改用一条 UPDATE 配合 WHERE 完成\n"
         "3. 表名/列名必须与 schema 完全一致；条件值优先使用 schema 中给出的抽样值\n"
-        "4. 结果只输出一个 JSON 对象：{{\"sql\": \"...\", \"summary_zh\": \"一句话中文操作说明\"}}\n"
-        "5. sql 字段内不要用 markdown 围栏\n\n"
+        "4. {identifier_rule}\n"
+        "5. 结果只输出一个 JSON 对象：{{\"sql\": \"...\", \"summary_zh\": \"一句话中文操作说明\"}}\n"
+        "6. sql 字段内不要用 markdown 围栏\n\n"
         "数据库结构：\n{schema}\n\n"
         "用户操作：{question}\n\n"
         "输出 JSON："
@@ -15562,7 +15723,24 @@ class NL2WriteExecutor:
     def prepare(self, question: str, history: Optional[list] = None) -> DBAnswer:
         """生成写提案（dry-run 预览后返回 kind='write_pending'，零落库）。"""
         schema_txt = self.schema.compact()
-        prompt = self._SYSTEM_PROMPT.format(schema=schema_txt, question=question)
+        dialect = str(getattr(self.connector, "dialect", "sqlite") or "sqlite")
+        allowed_operations = (
+            "INSERT/UPDATE/DELETE"
+            if isinstance(self.connector, RemoteDBConnector)
+            else "INSERT/UPDATE/DELETE/CREATE TABLE/ALTER TABLE/DROP TABLE"
+        )
+        identifier_rule = (
+            "MySQL 标识符需要引用时使用反引号，不要使用双引号"
+            if dialect == "mysql"
+            else "标识符需要引用时使用 SQL 双引号"
+        )
+        prompt = self._SYSTEM_PROMPT.format(
+            dialect=dialect,
+            allowed_operations=allowed_operations,
+            identifier_rule=identifier_rule,
+            schema=schema_txt,
+            question=question,
+        )
         obj = _llm_ask_json(prompt, self.llm_cfg, history=history)
         sql = (obj.get("sql") or "").strip()
         summary = (obj.get("summary_zh") or "").strip()
@@ -15822,7 +16000,7 @@ class RagRetriever:
                 history=history,
             )
             narrative = (obj.get("answer_zh") or "").strip()
-        except DBAgentError:
+        except DBQuillError:
             return None
         if not narrative:
             return None
@@ -15849,7 +16027,7 @@ class RagRetriever:
         try:
             obj = _llm_ask_json(prompt, self.llm_cfg, history=history)
             narrative = (obj.get("answer_zh") or "").strip() or "已检索到相关内容（详见证据）。"
-        except DBAgentError as e:
+        except DBQuillError as e:
             narrative = f"检索到 {len(ev)} 条相关记录，但 LLM 组织回答失败：{e}"
         return DBAnswer(kind="retrieve", narrative=narrative, evidence=ev)
 
@@ -17137,10 +17315,10 @@ class BasicConversationRouter:
         elif self._THANKS_RE.fullmatch(text):
             narrative = "不客气。你可以继续问数据，也可以换一个问题。"
         elif self._FAREWELL_RE.fullmatch(text):
-            narrative = "再见。下次打开 DB-Agent 后，仍可以从当前数据库继续。"
+            narrative = "再见。下次打开 DBQuill 后，仍可以从当前数据库继续。"
         elif self._IDENTITY_RE.fullmatch(text):
             narrative = (
-                "我是 DB-Agent，一个以自然语言驱动数据库操作的本地桌面助手。"
+                "我是 DBQuill，一个以自然语言驱动数据库操作的本地桌面助手。"
                 "我会把查询、分析和受控写入分开处理，也能进行简单的日常沟通。"
             )
         elif self._CAPABILITY_RE.fullmatch(text):
@@ -17307,7 +17485,7 @@ class IntentRouter:
             obj = _llm_ask_json(prompt, self.llm_cfg, history=history)
             intent = (obj.get("intent") or "").strip().lower()
             if intent not in ("query", "retrieve", "compose", "write"):
-                raise DBAgentError(f"意图非法: {intent!r}")
+                raise DBQuillError(f"意图非法: {intent!r}")
             interaction = str(obj.get("interaction") or "").strip().lower()
             if intent != "write":
                 interaction = "auto"
@@ -17322,7 +17500,7 @@ class IntentRouter:
                 target_table=target_table,
                 source="model",
             )
-        except (DBAgentError, ValueError, TypeError) as e:
+        except (DBQuillError, ValueError, TypeError) as e:
             if guided_insert_hint:
                 return IntentResult(
                     intent="write",
@@ -17815,7 +17993,7 @@ class OperationGraphExecutor:
         try:
             obj = _llm_ask_json(prompt, self.llm_cfg, history=history)
             narrative = (obj.get("answer_zh") or "").strip()
-        except DBAgentError:
+        except DBQuillError:
             narrative = ""
         if not narrative:
             if query_items:
@@ -18009,11 +18187,11 @@ class ToolOrchestrator:
 
 
 # ---------------------------------------------------------------------------
-# DBAgent —— 总入口（一问一答）
+# DBQuillAgent —— 总入口（一问一答）
 # ---------------------------------------------------------------------------
 
-class DBAgent:
-    """DB Agent 门面：问题 → 意图路由 → 对应执行器 → 统一 DBAnswer。"""
+class DBQuillAgent:
+    """DBQuill 门面：问题 → 意图路由 → 对应执行器 → 统一 DBAnswer。"""
 
     def __init__(
         self,
@@ -18358,17 +18536,18 @@ class DBAgent:
             schema_context += "\n\n业务语义目录：\n" + semantic_context
         ir = self.router.classify(execution_question, schema_context, history=history)
         operation = self.operation_planner.from_intent(resolved_question, ir)
-        if operation.mode == "write" and isinstance(self.connector, RemoteDBConnector):
+        if operation.mode == "write" and isinstance(self.connector, RemoteDBConnector) \
+                and not self.connector.write_enabled:
             operation.status = "failed"
             operation.reasoning = (
-                "远程 MySQL/PostgreSQL 连接当前是只读产品边界；"
+                "远程 MySQL/PostgreSQL 连接当前选择了只读模式；"
                 "未生成、预览或执行写 SQL"
             )
             return DBAnswer(
                 kind="error",
                 narrative=(
-                    "当前 MySQL/PostgreSQL 数据源仅支持只读问答，"
-                    "这条写入请求未执行。"
+                    "当前 MySQL/PostgreSQL 数据源以只读模式连接，"
+                    "这条写入请求未执行；如需变更数据，请用受控读写模式重新连接。"
                 ),
                 error="remote_database_write_not_supported",
                 operation=operation.as_dict(),
@@ -18572,18 +18751,21 @@ class DBAgent:
                 kind="error", narrative=f"写操作被安全拦截：{e}", error=str(e),
                 operation=operation.as_dict(),
             )
-        conn = self.connector.connect_rw()
+        conn = None
         rowcount = 0
         try:
+            conn = self.connector.connect_rw()
             self.write_previewer._install_table_authorizer(conn)
-            conn.execute("BEGIN")
-            cur = conn.execute(proposal.sql)
+            self.connector.begin_rw(conn)
+            cur = self.connector.execute_rw(conn, proposal.sql)
             rowcount = cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else 0
-            conn.commit()
-        except sqlite3.Error as e:
+            self.write_previewer._close_cursor(cur)
+            self.connector.commit_rw(conn)
+        except Exception as e:  # vendor-specific DB-API exceptions
             try:
-                conn.rollback()
-            except sqlite3.Error:
+                if conn is not None:
+                    self.connector.rollback_rw(conn)
+            except Exception:
                 pass
             operation.status = "failed"
             return DBAnswer(
@@ -18591,7 +18773,8 @@ class DBAgent:
                 operation=operation.as_dict(),
             )
         finally:
-            self.connector.close(conn)
+            if conn is not None:
+                self.connector.close(conn)
         operation.status = "executed"
         return DBAnswer(
             kind="write_result",
@@ -18609,7 +18792,7 @@ class DBAgent:
 
 _HISTORY_MAX_MSGS = 14  # 会话内多轮历史最多注入的消息条数（约 7 轮）
 _ACTIVE_CANCEL_EVENT: contextvars.ContextVar[Optional[threading.Event]] = (
-    contextvars.ContextVar("dbagent_active_cancel_event", default=None)
+    contextvars.ContextVar("dbquill_active_cancel_event", default=None)
 )
 
 
@@ -18768,11 +18951,11 @@ def _llm_ask_json(prompt: str, cfg_name: str = "default", history: Optional[list
     # 提取第一个 JSON 对象（容忍 markdown 围栏 / 前后废话）
     m = re.search(r"\{.*\}", raw, re.DOTALL)
     if not m:
-        raise DBAgentError(f"LLM 输出不含 JSON: {raw[:200]}")
+        raise DBQuillError(f"LLM 输出不含 JSON: {raw[:200]}")
     try:
         obj = json.loads(m.group(0))
     except json.JSONDecodeError as e:
-        raise DBAgentError(f"LLM JSON 解析失败: {e} | raw={raw[:200]}") from e
+        raise DBQuillError(f"LLM JSON 解析失败: {e} | raw={raw[:200]}") from e
     # 中文兜底：叙述类字段若为英文，自动翻译为简体中文（sql 等代码字段不翻译）
     for k in ("summary_zh", "answer_zh", "reasoning", "narrative"):
         if isinstance(obj.get(k), str):
@@ -18782,5 +18965,5 @@ def _llm_ask_json(prompt: str, cfg_name: str = "default", history: Optional[list
 
 if __name__ == "__main__":
     # 骨架自检：可导入、可实例化（需真实 db 路径才完整工作）
-    print("dbagent_core skeleton OK")
-    print("classes:", [c for c in dir() if c[0].isupper() and c not in ("DBConnector", "SchemaDiscovery", "SQLSecurity", "NL2SQLExecutor", "RagRetriever", "IntentRouter", "ToolOrchestrator", "DBAgent")])
+    print("dbquill_core skeleton OK")
+    print("classes:", [c for c in dir() if c[0].isupper() and c not in ("DBConnector", "SchemaDiscovery", "SQLSecurity", "NL2SQLExecutor", "RagRetriever", "IntentRouter", "ToolOrchestrator", "DBQuillAgent")])

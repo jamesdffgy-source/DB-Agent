@@ -1,6 +1,6 @@
 # 安装说明
 
-DB-Agent 当前采用源码优先发布，还没有提供经过签名的原生安装器。
+DBQuill 当前采用源码优先发布，还没有提供经过签名的原生安装器。
 
 ## 支持环境
 
@@ -10,7 +10,7 @@ DB-Agent 当前采用源码优先发布，还没有提供经过签名的原生�
 | Python | CPython 3.12；CI 选择可用的 3.12 补丁版本 |
 | 界面渲染 | Microsoft Edge WebView2 Runtime |
 | 网络 | 首次克隆和安装锁定依赖时需要；之后仅在访问已配置模型接口时需要 |
-| 数据库 | SQLite、CSV/`.xlsx` 导入，以及 MySQL 8.4/PostgreSQL 17 只读链路 |
+| 数据库 | SQLite、CSV/`.xlsx` 导入，以及 MySQL 8.4/PostgreSQL 17 只读链路和显式启用的受控 DML |
 
 源码流程已经在全新导出目录和 GitHub Windows CI 中验证。其他 Python 版本、Windows on ARM、macOS 和 Linux 暂时不是发布目标。
 
@@ -19,8 +19,8 @@ DB-Agent 当前采用源码优先发布，还没有提供经过签名的原生�
 打开 PowerShell 或命令提示符：
 
 ```powershell
-git clone https://github.com/jamesdffgy-source/DB-Agent.git
-cd DB-Agent
+git clone https://github.com/jamesdffgy-source/DBQuill.git
+cd DBQuill
 .\scripts\install_and_start.cmd
 ```
 
@@ -37,21 +37,22 @@ cd DB-Agent
 ```powershell
 .\scripts\bootstrap_dev.cmd
 .\scripts\doctor.cmd
-.\scripts\start_dbagent.cmd
+.\scripts\start_dbquill.cmd
 ```
 
 如果机器上有多个 Python，可以在当前终端明确指定：
 
 ```powershell
-$env:DBAGENT_PYTHON = 'C:\Path\To\Python312\python.exe'
+$env:DBQUILL_PYTHON = 'C:\Path\To\Python312\python.exe'
 .\scripts\bootstrap_dev.cmd
 ```
 
 ## 首次运行
 
 1. 打开“设置”，添加兼容 OpenAI 接口格式的文本模型配置。
-2. 通过“添加数据库”接入 SQLite、导入 CSV/`.xlsx`，或创建 MySQL/PostgreSQL 只读连接。
-3. 第一次建议使用合成数据。生成随附演示库：
+2. 通过“添加数据库”接入 SQLite、导入 CSV/`.xlsx`，或创建 MySQL/PostgreSQL 连接。远程连接默认只读；只有确实需要提出数据变更时才选择“受控读写”。
+3. 远程受控写入只支持 `INSERT`、带条件的 `UPDATE` 和带条件的 `DELETE`。每条提案先在事务中执行并回滚生成预览，之后仍需按角色显式确认；远程 DDL 不开放。
+4. 第一次建议使用合成数据。生成随附演示库：
 
 ```powershell
 .\scripts\run_python.cmd scripts\create_demo_database.py
@@ -89,4 +90,4 @@ $env:DBAGENT_PYTHON = 'C:\Path\To\Python312\python.exe'
 
 ## 卸载
 
-停止桌面应用后删除克隆目录即可。DB-Agent 不安装 Windows 服务，也不会把应用凭据写入源码。删除前请备份需要保留的本地数据库或审计导出。
+停止桌面应用后删除克隆目录即可。DBQuill 不安装 Windows 服务，也不会把应用凭据写入源码。删除前请备份需要保留的本地数据库或审计导出。

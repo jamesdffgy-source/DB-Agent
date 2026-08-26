@@ -31,13 +31,13 @@ REQUIRED_FILES = (
     Path(".github/PULL_REQUEST_TEMPLATE.md"),
     Path("scripts/run_python.cmd"),
     Path("scripts/bootstrap_dev.cmd"),
-    Path("scripts/start_dbagent.cmd"),
+    Path("scripts/start_dbquill.cmd"),
     Path("scripts/install_and_start.cmd"),
     Path("scripts/doctor.cmd"),
     Path("scripts/doctor.py"),
     Path("scripts/smoke_startup.py"),
-    Path("docs/assets/dbagent-overview.png"),
-    Path("docs/assets/dbagent-handdrawn-workflow.png"),
+    Path("docs/assets/dbquill-overview.png"),
+    Path("docs/assets/dbquill-handdrawn-workflow.png"),
     Path("third_party/licenses/APACHE-2.0.txt"),
     Path("third_party/licenses/BSD-3-Clause-D3.txt"),
 )
@@ -205,7 +205,7 @@ def _check_runtime_provenance(paths: list[Path]) -> None:
     runtime_paths = [
         relative for relative in paths
         if relative.as_posix().startswith("runtime/app/")
-        or relative.as_posix() == "dbagent_launcher.pyw"
+        or relative.as_posix() == "dbquill_launcher.pyw"
     ]
     bad_names = [
         relative.as_posix() for relative in runtime_paths
@@ -235,7 +235,7 @@ def _check_ci_contract() -> None:
         "actions/setup-python@v7",
         ".\\scripts\\bootstrap_dev.cmd",
         ".\\scripts\\doctor.cmd",
-        "DBAGENT_PYTHON",
+        "DBQUILL_PYTHON",
         ".\\scripts\\check_project.cmd",
         "scripts\\smoke_startup.py",
         "contents: read",

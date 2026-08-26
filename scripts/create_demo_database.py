@@ -1,4 +1,4 @@
-"""Create the deterministic SQLite database used for manual DB-Agent testing."""
+"""Create the deterministic SQLite database used for manual DBQuill testing."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUTPUT = PROJECT_ROOT / "demo_data" / "dbagent_demo.sqlite"
+DEFAULT_OUTPUT = PROJECT_ROOT / "demo_data" / "dbquill_demo.sqlite"
 DATASET_VERSION = "2026.08.18-v1"
 
 
@@ -223,7 +223,7 @@ def create_database(output: Path, *, force: bool = False) -> dict[str, int | str
                     ("dataset_version", DATASET_VERSION),
                     ("reference_date", "2026-08-18"),
                     ("currency", "CNY"),
-                    ("purpose", "DB-Agent manual NL-to-Database validation"),
+                    ("purpose", "DBQuill manual NL-to-Database validation"),
                 ],
             )
             conn.executemany(

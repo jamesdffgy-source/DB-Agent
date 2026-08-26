@@ -2185,3 +2185,36 @@
 - 安全升级后的主工作树正式门禁通过：登记时间 `2026-08-26T16:42:39+08:00`，413/413 回归、134/134 离线评测、8/8 时区探针、12/12 历史脱敏模型基线，指纹 `83f1861f93356072021619fbcefb288f170189d9e2524389cbc31a8570509876`。来源复扫对 917 个参考文件精确和高重合均为 0，凭据发现 0。
 - 使用安全 lease 替换新仓库的根提交和 `v0.1.0` 后，公开 Windows `project-gate` 在 1 分 34 秒内完成全新安装、完整门禁与启动探针；`source-release` 在 1 分 43 秒内完成同等验证、版本包和公开 release。依赖图刷新成功，Dependabot 未修复警报为 0。
 - 从公开 release 独立重新下载 5,418,305 字节的源码 ZIP，附带值与本地 SHA-256 均为 `b3a205db6bf111f6aaf6e5a16a921ef7596af32dd15d5a37f820b51fe0b67d7b`。解包审计为 120 个条目，锁定 `aiohttp` 3.14.3，禁止运行态文件 0。本地与 runner 的 `git archive` 因 Git/压缩实现不保证跨环境逐字节相同，因此工作流步骤更名为“versioned source archive”；完整性以每次发行附带的 SHA-256 为准。同时删除未实际命中的 setup-python pip 缓存配置，消除 Actions 无意义警告；这两项收尾变更纳入新指纹后再执行一次门禁。
+
+## 2026-08-27 01:28 +08:00
+
+- 公开品牌从 DB-Agent 统一为 **DBQuill — Natural-Language Database Agent**：启动器、核心模块、脚本、
+  图标、截图、环境变量、HTTP 首选头、导出名、README、安装文档与发布工作流均已改名。为避免破坏
+  v0.1 数据，角色/凭据/访问范围安全域及旧环境变量、请求头、Cookie、语义和审计导入继续只作为兼容输入。
+- 修复批量改名造成的角色响应头递归；响应同时发出 `X-DBQuill-Role` 和 v0.1 兼容头。重命名与兼容
+  回归通过 416/416。
+- 分析确认 SQLite 已有 INSERT/UPDATE/DELETE、回滚预览、一次性确认、角色审批、审计、提交与失败回滚；
+  缺口是远程 MySQL/PostgreSQL 写意图被产品边界整体拒绝。现改为默认只读、显式受控 DML 双通道：查询
+  始终强制只读，写通道只允许 INSERT/带 WHERE UPDATE/带 WHERE DELETE，远程 DDL 在打开预览连接前拒绝。
+- 新增两方言事务替身回归，逐项证明 UPDATE/INSERT/DELETE 预览零落库、确认后提交、只读默认和 DDL
+  提前拒绝；完整回归为 419/419。当前机器没有 Docker、MySQL/PostgreSQL 客户端、服务或监听端口，
+  因此本轮不能把事务替身结果描述为真实服务端写入矩阵；发布文档已明确该差距。
+
+## 2026-08-27 01:40 +08:00
+
+- 从提交 `0b7d9ee` 生成不含 Git、便携运行时、虚拟环境和运行数据的源码归档，在
+  `D:\DBQuill-Clean-20260827-0130` 初始化独立单根仓库。使用系统 CPython 3.12.10 新建 D 盘 `.venv`，
+  下载缓存固定在 D 盘，按 `requirements.lock --require-hashes` 从零安装 26 个依赖；`pip check` 无错误。
+- 干净副本的 doctor、随机端口/token 启动探针和完整项目门禁通过：419/419 回归、134/134 离线评测、
+  8/8 时区探针、12/12 历史模型基线，登记源码状态一致。使用发行脚本生成
+  `DBQuill-0.2.0-source.zip`，大小 5,425,782 字节，SHA-256
+  `4541e6dd104ac6c1e8e698872655326b1e465c76cb9b0709ff15d089bca3b3c7`；120 个条目全部位于
+  `DBQuill-0.2.0/`，禁止运行态条目为 0。
+
+## 2026-08-27 01:42 +08:00
+
+- GitHub 公开仓库已原位从 `jamesdffgy-source/DB-Agent` 更名为 `jamesdffgy-source/DBQuill`，仓库 ID、
+  16 个 star、默认 `main`、安全设置和历史保持不变。本地 `origin` 已切换到新 HTTPS 地址。
+- 仓库简介改为本地优先自然语言数据库智能体，topics 精简为 `database-agent`、`natural-language`、
+  `text-to-sql`、`sqlite`、`mysql`、`postgresql`、`local-first` 和 `windows`。本条后执行最后一次
+  `--record`，再推送主分支和 `v0.2.0` 标签，以公开 Actions/Release 作为最终发布证据。

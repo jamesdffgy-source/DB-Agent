@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rescore stored DB-Agent Spider predictions on released SQLite content.
+"""Rescore stored DBQuill Spider predictions on released SQLite content.
 
 This is deliberately a single-database execution agreement metric.  It uses
 one official released database per schema and therefore must not be reported
@@ -33,7 +33,7 @@ FRONTENDS = ROOT / "runtime" / "app" / "frontends"
 if str(FRONTENDS) not in sys.path:
     sys.path.insert(0, str(FRONTENDS))
 
-from dbagent_core import (
+from dbquill_core import (
     DBConnector,
     NL2SQLExecutor,
     SQLSecurity,
@@ -47,8 +47,8 @@ DEFAULT_OFFICIAL_DATA = ROOT / "benchmark_data" / "spider_data_official" / "spid
 DEFAULT_OUTPUT = ROOT / "benchmark_results" / "spider_relational_ir_15_execution_rescore.json"
 DEFAULT_MARKDOWN = ROOT / "benchmark_results" / "spider_relational_ir_15_execution_rescore.md"
 INFRASTRUCTURE_ERROR_CATEGORY = "llm_infrastructure_error"
-SCORING_CONTRACT = "dbagent-spider-single-db-execution-rescore-v1"
-ARCHITECTURE_REPLAY_CONTRACT = "dbagent-current-local-semantic-gate-replay-v2"
+SCORING_CONTRACT = "dbquill-spider-single-db-execution-rescore-v1"
+ARCHITECTURE_REPLAY_CONTRACT = "dbquill-current-local-semantic-gate-replay-v2"
 
 
 def _atomic_json(path: Path, payload: dict) -> None:
@@ -582,7 +582,7 @@ def _markdown(payload: dict) -> str:
     transitions = summary["exact_execution_transitions"]
     replay = summary["architecture_replay"]
     lines = [
-        "# DB-Agent Spider 单数据库执行重评分",
+        "# DBQuill Spider 单数据库执行重评分",
         "",
         f"- 来源运行：`{payload['source']['prompt_contract']}` / `{payload['source']['sample_fingerprint'][:16]}`",
         f"- 单数据库执行一致：{metric['passed']}/{metric['total']} ({(metric['rate'] or 0) * 100:.1f}%)",

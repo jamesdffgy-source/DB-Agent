@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $normalizedVersion = $Version.TrimStart('v')
 $outputDirectory = Join-Path $projectRoot 'dist'
-$archiveName = "DB-Agent-$normalizedVersion-source.zip"
+$archiveName = "DBQuill-$normalizedVersion-source.zip"
 $archivePath = Join-Path $outputDirectory $archiveName
 $checksumPath = "$archivePath.sha256"
 
@@ -20,7 +20,7 @@ if (Test-Path -LiteralPath $checksumPath) {
     Remove-Item -LiteralPath $checksumPath -Force
 }
 
-git -C $projectRoot archive --format=zip --prefix="DB-Agent-$normalizedVersion/" --output=$archivePath HEAD
+git -C $projectRoot archive --format=zip --prefix="DBQuill-$normalizedVersion/" --output=$archivePath HEAD
 if ($LASTEXITCODE -ne 0) {
     throw 'git archive failed'
 }

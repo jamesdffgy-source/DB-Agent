@@ -2,6 +2,33 @@
 
 All notable user-facing changes are recorded here. Versions follow semantic versioning while the project is in its initial public phase.
 
+## 0.2.0 - 2026-08-27
+
+### Added
+
+- Added opt-in controlled `INSERT`, bounded `UPDATE`, and bounded `DELETE` for
+  MySQL and PostgreSQL. Read traffic keeps a separate physical read-only session;
+  writes use rollback preview, one-time confirmation, transactional commit, and audit.
+- Added a remote connection-mode selector. Read-only remains the default, and remote
+  DDL remains blocked because it cannot be previewed with equivalent rollback safety.
+
+### Changed
+
+- Renamed the product and repository to **DBQuill**, with the descriptor
+  **Natural-Language Database Agent**.
+- Renamed the launcher, core module, startup command, release archives, demo
+  database, icons, screenshots, and public export filenames to the DBQuill brand.
+- Added DBQuill environment variables and HTTP headers while retaining v0.1
+  environment, header, cookie, semantic-import, audit-artifact, credential, and
+  authorization identifiers as compatibility inputs.
+
+### Compatibility
+
+- Existing databases, role tokens, scoped credentials, sessions, audit ledgers,
+  semantic catalogs, and previously generated timezone SQL remain readable.
+- The rename does not relax the read-only default, authorization scopes, write
+  previews, one-time confirmation, audit integrity, or query limits.
+
 ## 0.1.0 - 2026-08-26
 
 ### Added
@@ -17,5 +44,6 @@ All notable user-facing changes are recorded here. Versions follow semantic vers
 ### Known limits
 
 - Distribution is source-first and requires Windows x64, Python 3.12, and WebView2.
-- MySQL and PostgreSQL writes are not supported.
+- MySQL and PostgreSQL controlled DML is new in 0.2.0 and has regression-level
+  transaction coverage; live vendor write-matrix evidence is not yet published.
 - macOS, Linux, Windows on ARM, and legacy `.xls` imports are not verified release targets.

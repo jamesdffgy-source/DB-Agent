@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check whether a Windows source installation can start DB-Agent."""
+"""Check whether a Windows source installation can start DBQuill."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ REQUIRED_IMPORTS = (
     ("webview", "pywebview"),
 )
 REQUIRED_FILES = (
-    ROOT / "dbagent_launcher.pyw",
+    ROOT / "dbquill_launcher.pyw",
     ROOT / "runtime/app/frontends/desktop_bridge.py",
     ROOT / "runtime/app/frontends/desktop/static/db.html",
 )

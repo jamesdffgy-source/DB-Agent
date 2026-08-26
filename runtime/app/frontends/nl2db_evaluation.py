@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Versioned, repeatable evaluation for DB-Agent's native NL-to-Database chain.
+"""Versioned, repeatable evaluation for DBQuill's native NL-to-Database chain.
 
 The offline channel intentionally does not call an LLM. Planner cases use a
 human-labelled oracle intent so they measure deterministic operation planning,
@@ -27,7 +27,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-import dbagent_core as dc
+import dbquill_core as dc
 import model_baseline_contract as model_baselines
 
 
@@ -35,7 +35,11 @@ ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_DATASET = Path(__file__).with_name("evaluation") / "nl2db_cases.json"
 DEFAULT_MARKDOWN_REPORT = ROOT / "docs" / "EVALUATION_REPORT.md"
 DEFAULT_JSON_REPORT = ROOT / "docs" / "EVALUATION_REPORT.json"
-DEFAULT_LLM_CFG = os.environ.get("DBAGENT_MODEL_PROFILE", "default")
+DEFAULT_LLM_CFG = (
+    os.environ.get("DBQUILL_MODEL_PROFILE")
+    or os.environ.get("DBAGENT_MODEL_PROFILE")
+    or "default"
+)
 
 
 def _sha256_file(path: Path) -> str:
@@ -834,7 +838,7 @@ def _evaluate_model(dataset: dict, db_path: Path, llm_cfg: str) -> dict:
     prompt_contract = "nl2sql-" + hashlib.sha256(
         dc.NL2SQLExecutor._SYSTEM_PROMPT.encode("utf-8"),
     ).hexdigest()[:16]
-    agent = dc.DBAgent(
+    agent = dc.DBQuillAgent(
         db_path=str(db_path),
         semantic_entries=dataset.get("semantic_entries") or [],
         llm_cfg=llm_cfg,
@@ -906,7 +910,7 @@ def run_suite(
     path = Path(dataset_path)
     dataset = _load_dataset(path)
     dataset_sha256 = _sha256_file(path)
-    with tempfile.TemporaryDirectory(prefix="dbagent-eval-") as temp_dir:
+    with tempfile.TemporaryDirectory(prefix="dbquill-eval-") as temp_dir:
         db_path = Path(temp_dir) / "fixture.db"
         _create_fixture(db_path)
         connector = dc.DBConnector(str(db_path))
@@ -1120,7 +1124,7 @@ def write_reports(result: dict, markdown_path: Path, json_path: Path) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="运行 DB-Agent 固定 NL-to-Database 评测集")
+    parser = argparse.ArgumentParser(description="运行 DBQuill 固定 NL-to-Database 评测集")
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET, help="评测集 JSON 路径")
     parser.add_argument("--with-model", action="store_true", help="额外运行真实模型 NL2SQL 通道")
     parser.add_argument("--llm-cfg", default=DEFAULT_LLM_CFG, help="真实模型通道使用的本地模型档案 key")

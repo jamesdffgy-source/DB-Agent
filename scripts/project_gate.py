@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DB-Agent completion gate: documentation freshness, tests and source fingerprint."""
+"""DBQuill completion gate: documentation freshness, tests and source fingerprint."""
 
 from __future__ import annotations
 
@@ -42,8 +42,8 @@ LOCAL_ONLY_FILES = {
     Path("runtime/app/model_profiles.json"),
 }
 COMPILE_TARGETS = (
-    ROOT / "dbagent_launcher.pyw",
-    ROOT / "runtime/app/frontends/dbagent_core.py",
+    ROOT / "dbquill_launcher.pyw",
+    ROOT / "runtime/app/frontends/dbquill_core.py",
     ROOT / "runtime/app/frontends/model_gateway.py",
     ROOT / "runtime/app/frontends/model_profiles.py",
     ROOT / "runtime/app/frontends/upload_storage.py",
@@ -101,7 +101,7 @@ def controlled_files() -> list[Path]:
         ROOT / ".github",
         ROOT / "third_party",
         ROOT / "docs",
-        ROOT / "dbagent_launcher.pyw",
+        ROOT / "dbquill_launcher.pyw",
         ROOT / "runtime/app",
         ROOT / "scripts",
     ]
@@ -313,7 +313,7 @@ def write_state(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="DB-Agent 项目完成门禁")
+    parser = argparse.ArgumentParser(description="DBQuill 项目完成门禁")
     parser.add_argument("--record", action="store_true", help="验证通过后记录当前源码指纹")
     parser.add_argument("--summary", default="", help="本次已记录并验证的工作摘要")
     args = parser.parse_args()

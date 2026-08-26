@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Versioned, hash-bound IANA release archives for DB-Agent.
+"""Versioned, hash-bound IANA release archives for DBQuill.
 
 The runtime reads TZif files from project-owned ZIP archives. Multiple releases
 may coexist so semantic calendars remain reproducible after an upgrade, while

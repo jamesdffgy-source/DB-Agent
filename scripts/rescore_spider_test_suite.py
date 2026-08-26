@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rescore stored DB-Agent Spider predictions on official test-suite DBs."""
+"""Rescore stored DBQuill Spider predictions on official test-suite DBs."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ DEFAULT_OUTPUT = ROOT / "benchmark_results" / "spider_relational_ir_15_test_suit
 DEFAULT_MARKDOWN = ROOT / "benchmark_results" / "spider_relational_ir_15_test_suite_rescore.md"
 EXPECTED_UPSTREAM_COMMIT = "e97acc546ecbee8fa27fa8dbf025ef61493a876c"
 EXPECTED_ARCHIVE_SHA256 = "9ec24ea8debc6bd04abfe137b5f1a739b5a8836f32c0464e4dfc94eb7f41da96"
-SCORING_CONTRACT = "dbagent-spider-test-suite-execution-rescore-v1"
+SCORING_CONTRACT = "dbquill-spider-test-suite-execution-rescore-v1"
 INFRASTRUCTURE_ERROR_CATEGORY = "llm_infrastructure_error"
 
 
@@ -213,7 +213,7 @@ def _markdown(payload: dict) -> str:
     transitions = summary["single_to_test_suite_transitions"]
     repairs = summary["local_repair_test_suite"]
     lines = [
-        "# DB-Agent Spider 多数据库 Test Suite 重评分",
+        "# DBQuill Spider 多数据库 Test Suite 重评分",
         "",
         f"- 官方兼容口径（预测值、忽略 DISTINCT）：{upstream['passed']}/{upstream['total']} ({(upstream['rate'] or 0) * 100:.1f}%)",
         f"- 严格产品口径（预测值、保留 DISTINCT）：{strict['passed']}/{strict['total']} ({(strict['rate'] or 0) * 100:.1f}%)",
@@ -224,7 +224,7 @@ def _markdown(payload: dict) -> str:
         f"非并列回归 {len(repairs['strict_regressions'])}",
         "",
         "> 每条 SQL 必须在同 schema 的全部官方扰动数据库上与 gold 结果一致。项目会预测值，"
-        "因此不注入 gold 值；严格产品口径额外保留 DISTINCT 语义。执行仍经过 DB-Agent 只读、"
+        "因此不注入 gold 值；严格产品口径额外保留 DISTINCT 语义。执行仍经过 DBQuill 只读、"
         "单语句、超时和结果上限门禁，因此是官方语义的有界安全实现。",
         "",
         "## 单数据库到 Test Suite 迁移",

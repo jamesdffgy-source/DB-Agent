@@ -1,6 +1,6 @@
 # Security Policy
 
-DB-Agent can inspect and modify databases, so security reports are handled as product-safety issues rather than ordinary bugs.
+DBQuill can inspect and modify databases, so security reports are handled as product-safety issues rather than ordinary bugs.
 
 ## Supported versions
 

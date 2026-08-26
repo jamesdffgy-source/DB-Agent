@@ -26,7 +26,7 @@ def _free_loopback_port() -> int:
 
 
 def _request(url: str, token: str) -> bytes:
-    request = urllib.request.Request(url, headers={"X-DBAgent-Token": token})
+    request = urllib.request.Request(url, headers={"X-DBQuill-Token": token})
     with urllib.request.urlopen(request, timeout=3) as response:
         if response.status != 200:
             raise RuntimeError(f"unexpected HTTP status: {response.status}")
@@ -85,8 +85,8 @@ def main() -> int:
             raise RuntimeError(f"bridge loaded the wrong app root: {status.get('appRoot')}")
 
         html = _request(f"http://127.0.0.1:{port}/db", token).decode("utf-8")
-        if "DB-Agent" not in html and "DB Agent" not in html:
-            raise RuntimeError("desktop route did not return the DB-Agent interface")
+        if "DBQuill" not in html:
+            raise RuntimeError("desktop route did not return the DBQuill interface")
 
         print(
             json.dumps(

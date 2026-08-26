@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-check DB-Agent's upstream-compatible TSA against the public evaluator."""
+"""Cross-check DBQuill's upstream-compatible TSA against the public evaluator."""
 
 from __future__ import annotations
 

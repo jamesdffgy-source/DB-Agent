@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect, back up, verify, or restore the local DB-Agent audit ledger."""
+"""Inspect, back up, verify, or restore the local DBQuill audit ledger."""
 from __future__ import annotations
 
 import argparse
@@ -301,7 +301,7 @@ def restore_corrupt_external(args: argparse.Namespace) -> dict:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="DB-Agent 审计账本离线管理；restore 前必须完全退出桌面应用。",
+        description="DBQuill 审计账本离线管理；restore 前必须完全退出桌面应用。",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("status", help="校验当前事件链、未决对账和备份状态").set_defaults(func=status)

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Run the same read-only DB-Agent contract against MySQL and PostgreSQL.
+"""Run the same read-only DBQuill contract against MySQL and PostgreSQL.
 
 The database servers and fixture schema are intentionally external to the
-repository.  Credentials are read from ``DBAGENT_REMOTE_TEST_PASSWORD`` so a
+repository. Credentials are read from ``DBQUILL_REMOTE_TEST_PASSWORD`` so a
 test password never becomes project configuration or source history.
 """
 from __future__ import annotations
@@ -22,7 +22,7 @@ FRONTENDS = ROOT / "runtime" / "app" / "frontends"
 if str(FRONTENDS) not in sys.path:
     sys.path.insert(0, str(FRONTENDS))
 
-import dbagent_core as core  # noqa: E402
+import dbquill_core as core  # noqa: E402
 
 
 def _plain(value: Any) -> Any:
@@ -190,12 +190,16 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--mysql-port", type=int, default=13306)
     parser.add_argument("--postgresql-port", type=int, default=15432)
-    parser.add_argument("--database", default="dbagent_bench")
-    parser.add_argument("--user", default="dbagent_ro")
+    parser.add_argument("--database", default="dbquill_bench")
+    parser.add_argument("--user", default="dbquill_ro")
     args = parser.parse_args()
-    password = os.environ.get("DBAGENT_REMOTE_TEST_PASSWORD", "")
+    password = (
+        os.environ.get("DBQUILL_REMOTE_TEST_PASSWORD")
+        or os.environ.get("DBAGENT_REMOTE_TEST_PASSWORD")
+        or ""
+    )
     if not password:
-        raise SystemExit("DBAGENT_REMOTE_TEST_PASSWORD is required")
+        raise SystemExit("DBQUILL_REMOTE_TEST_PASSWORD is required")
     base = {
         "host": args.host,
         "database": args.database,

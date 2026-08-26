@@ -1,4 +1,4 @@
-"""DB-Agent 本地操作审计账本。
+"""DBQuill 本地操作审计账本。
 
 账本只接受受控、脱敏后的元数据，不保存原始自然语言问题、SQL、结果行、
 连接串、文件路径或凭据。事件只追加写入，并通过 SHA-256 前向哈希链提供
@@ -26,16 +26,29 @@ _DB_PATH = _DATA_DIR / "db_audit.db"
 _WRITE_LOCK = threading.RLock()
 
 SCHEMA_VERSION = 1
-EXPORT_FORMAT = "dbagent-audit-ledger"
-ANCHOR_FORMAT = "dbagent-audit-anchor"
-ARCHIVE_FORMAT = "dbagent-audit-archive"
-RESTORE_DRILL_FORMAT = "dbagent-audit-restore-drill"
-EXTERNAL_BACKUP_FORMAT = "dbagent-audit-external-backup"
-LEDGER_ASSESSMENT_FORMAT = "dbagent-audit-ledger-assessment"
-CORRUPT_EVIDENCE_FORMAT = "dbagent-audit-corrupt-ledger-evidence"
-EXTERNAL_TARGET_CONFIG_FORMAT = "dbagent-audit-external-target-config"
-EXTERNAL_TARGET_STATE_FORMAT = "dbagent-audit-external-target-state"
-EXTERNAL_TARGET_ATTEMPT_FORMAT = "dbagent-audit-external-target-attempt"
+EXPORT_FORMAT = "dbquill-audit-ledger"
+BACKUP_FORMAT = "dbquill-audit-backup"
+ANCHOR_FORMAT = "dbquill-audit-anchor"
+ARCHIVE_FORMAT = "dbquill-audit-archive"
+RESTORE_DRILL_FORMAT = "dbquill-audit-restore-drill"
+EXTERNAL_BACKUP_FORMAT = "dbquill-audit-external-backup"
+LEDGER_ASSESSMENT_FORMAT = "dbquill-audit-ledger-assessment"
+CORRUPT_EVIDENCE_FORMAT = "dbquill-audit-corrupt-ledger-evidence"
+EXTERNAL_TARGET_CONFIG_FORMAT = "dbquill-audit-external-target-config"
+EXTERNAL_TARGET_STATE_FORMAT = "dbquill-audit-external-target-state"
+EXTERNAL_TARGET_ATTEMPT_FORMAT = "dbquill-audit-external-target-attempt"
+_LEGACY_FORMATS = {
+    BACKUP_FORMAT: "dbagent-audit-backup",
+    ANCHOR_FORMAT: "dbagent-audit-anchor",
+    ARCHIVE_FORMAT: "dbagent-audit-archive",
+    RESTORE_DRILL_FORMAT: "dbagent-audit-restore-drill",
+    EXTERNAL_BACKUP_FORMAT: "dbagent-audit-external-backup",
+    LEDGER_ASSESSMENT_FORMAT: "dbagent-audit-ledger-assessment",
+    CORRUPT_EVIDENCE_FORMAT: "dbagent-audit-corrupt-ledger-evidence",
+    EXTERNAL_TARGET_CONFIG_FORMAT: "dbagent-audit-external-target-config",
+    EXTERNAL_TARGET_STATE_FORMAT: "dbagent-audit-external-target-state",
+    EXTERNAL_TARGET_ATTEMPT_FORMAT: "dbagent-audit-external-target-attempt",
+}
 _GENESIS_HASH = "0" * 64
 _MAX_DETAILS_BYTES = 4096
 _MAX_SUMMARY_LENGTH = 120
@@ -43,6 +56,11 @@ _MAX_ACTION_LENGTH = 64
 _ACTION_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 _HEX_64_RE = re.compile(r"^[0-9a-f]{64}$")
 _REF_RE = re.compile(r"^[0-9a-f]{12,64}$")
+
+
+def _format_supported(value: Any, current: str) -> bool:
+    """Accept DBQuill artifacts and read-only v0.1 format identifiers."""
+    return value in {current, _LEGACY_FORMATS.get(current)}
 
 _CATEGORIES = frozenset({
     "nl_operation", "write_confirmation", "write_execution",
@@ -804,7 +822,7 @@ def create_backup(*, reason: str = "manual") -> dict:
                 raise RuntimeError("审计备份与源账本不一致")
             database_sha256 = _file_sha256(temp_database)
             manifest = {
-                "format": "dbagent-audit-backup",
+                "format": BACKUP_FORMAT,
                 "schema_version": SCHEMA_VERSION,
                 "backup_id": backup_id,
                 "created_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
@@ -841,7 +859,7 @@ def verify_backup(backup_id: str) -> dict:
     if not isinstance(manifest, dict) or set(manifest) != required:
         raise ValueError("审计备份清单结构无效")
     if (
-        manifest["format"] != "dbagent-audit-backup"
+        not _format_supported(manifest["format"], BACKUP_FORMAT)
         or manifest["schema_version"] != SCHEMA_VERSION
         or manifest["backup_id"] != _backup_id(backup_id)
         or manifest["database_file"] != database_path.name
@@ -915,7 +933,7 @@ def _validate_external_backup_manifest(manifest: Any) -> dict:
     except ValueError as exc:
         raise ValueError("外部审计备份清单时间无效") from exc
     if (
-        manifest.get("format") != EXTERNAL_BACKUP_FORMAT
+        not _format_supported(manifest.get("format"), EXTERNAL_BACKUP_FORMAT)
         or manifest.get("schema_version") != SCHEMA_VERSION
         or manifest.get("bundle_version") != 1
         or not re.fullmatch(r"[0-9]{14}_[0-9a-f]{12}", str(manifest.get("bundle_id")))
@@ -972,7 +990,7 @@ def _materialize_external_backup(bundle_file: Any):
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ValueError("外部审计备份清单无效") from exc
         manifest = _validate_external_backup_manifest(manifest)
-        with tempfile.TemporaryDirectory(prefix="dbagent-audit-external-") as temp_dir:
+        with tempfile.TemporaryDirectory(prefix="dbquill-audit-external-") as temp_dir:
             materialized = Path(temp_dir) / "audit.db"
             with archive.open(database_info, "r") as source, open(materialized, "wb") as target:
                 shutil.copyfileobj(source, target, length=1024 * 1024)
@@ -1012,7 +1030,7 @@ def create_external_backup(backup_id: str, output_dir: Any) -> dict:
         "head_hash": verified["head_hash"],
     }
     manifest["payload_sha256"] = _external_backup_payload_sha256(manifest)
-    filename = f"dbagent-audit-external-backup-{bundle_id}.zip"
+    filename = f"dbquill-audit-external-backup-{bundle_id}.zip"
     target = (directory / filename).resolve()
     temporary = (directory / f".{filename}.{uuid.uuid4().hex}.tmp").resolve()
     if target.parent != directory or temporary.parent != directory:
@@ -1150,7 +1168,7 @@ def _validate_external_target_config(config: Any) -> dict:
     except ValueError as exc:
         raise ValueError("外部审计备份目标配置时间无效") from exc
     if (
-        config.get("format") != EXTERNAL_TARGET_CONFIG_FORMAT
+        not _format_supported(config.get("format"), EXTERNAL_TARGET_CONFIG_FORMAT)
         or config.get("config_version") != 1
         or not re.fullmatch(r"[0-9a-f]{32}", str(config.get("target_id")))
         or configured_at.tzinfo is None
@@ -1235,15 +1253,18 @@ def _validate_external_target_state(state: Any) -> dict:
     except ValueError as exc:
         raise ValueError("外部审计备份目标状态时间无效") from exc
     bundle_id = str(state.get("bundle_id") or "")
-    expected_filename = f"dbagent-audit-external-backup-{bundle_id}.zip"
+    expected_filenames = {
+        f"dbquill-audit-external-backup-{bundle_id}.zip",
+        f"dbagent-audit-external-backup-{bundle_id}.zip",
+    }
     if (
-        state.get("format") != EXTERNAL_TARGET_STATE_FORMAT
+        not _format_supported(state.get("format"), EXTERNAL_TARGET_STATE_FORMAT)
         or state.get("state_version") != 1
         or not re.fullmatch(r"[0-9a-f]{32}", str(state.get("target_id")))
         or synchronized_at.tzinfo is None
         or _backup_id(state.get("backup_id")) != state.get("backup_id")
         or not re.fullmatch(r"[0-9]{14}_[0-9a-f]{12}", bundle_id)
-        or state.get("bundle_file") != expected_filename
+        or state.get("bundle_file") not in expected_filenames
         or not _HEX_64_RE.fullmatch(str(state.get("bundle_sha256")))
         or not isinstance(state.get("event_count"), int)
         or state["event_count"] < 0
@@ -1279,7 +1300,7 @@ def _validate_external_target_attempt(attempt: Any) -> dict:
         raise ValueError("外部审计备份同步尝试时间无效") from exc
     outcome = attempt.get("outcome")
     if (
-        attempt.get("format") != EXTERNAL_TARGET_ATTEMPT_FORMAT
+        not _format_supported(attempt.get("format"), EXTERNAL_TARGET_ATTEMPT_FORMAT)
         or attempt.get("attempt_version") != 1
         or not re.fullmatch(r"[0-9a-f]{32}", str(attempt.get("attempt_id")))
         or attempted_at.tzinfo is None
@@ -1454,8 +1475,8 @@ def probe_external_backup_target(*, confirmation: str) -> dict:
     config = _load_external_target_config(require_available=True)
     directory = _external_target_directory(config["directory"], require_exists=True)
     probe_id = uuid.uuid4().hex
-    temporary = (directory / f".dbagent-audit-probe-{probe_id}.tmp").resolve()
-    promoted = (directory / f".dbagent-audit-probe-{probe_id}.check").resolve()
+    temporary = (directory / f".dbquill-audit-probe-{probe_id}.tmp").resolve()
+    promoted = (directory / f".dbquill-audit-probe-{probe_id}.check").resolve()
     if temporary.parent != directory or promoted.parent != directory:
         raise ValueError("外部审计备份目标探测路径越界")
     payload = os.urandom(64)
@@ -1726,7 +1747,7 @@ def assess_current_ledger() -> dict:
         }
         # Opening a WAL database read-only can still create -wal/-shm files. Verify a
         # byte-for-byte temporary snapshot so the live evidence is physically untouched.
-        with tempfile.TemporaryDirectory(prefix="dbagent-audit-assessment-") as temp_dir:
+        with tempfile.TemporaryDirectory(prefix="dbquill-audit-assessment-") as temp_dir:
             isolated_database = Path(temp_dir) / "ledger.db"
             for item in before:
                 shutil.copy2(paths[item["role"]], Path(temp_dir) / item["archive_file"])
@@ -1823,7 +1844,7 @@ def _validate_corrupt_evidence_manifest(manifest: Any) -> dict:
     error_sequence = manifest.get("integrity_error_sequence")
     error_type = manifest.get("integrity_error_type")
     if (
-        manifest.get("format") != CORRUPT_EVIDENCE_FORMAT
+        not _format_supported(manifest.get("format"), CORRUPT_EVIDENCE_FORMAT)
         or manifest.get("schema_version") != SCHEMA_VERSION
         or manifest.get("bundle_version") != 1
         or not re.fullmatch(r"[0-9]{14}_[0-9a-f]{12}", str(manifest.get("evidence_id")))
@@ -1924,7 +1945,7 @@ def create_corrupt_ledger_evidence(
             "integrity_error_sha256": assessment["integrity_error_sha256"],
         }
         manifest["payload_sha256"] = _corrupt_evidence_payload_sha256(manifest)
-        filename = f"dbagent-audit-corrupt-evidence-{evidence_id}.zip"
+        filename = f"dbquill-audit-corrupt-evidence-{evidence_id}.zip"
         target = (directory / filename).resolve()
         temporary = (directory / f".{filename}.{uuid.uuid4().hex}.tmp").resolve()
         if target.parent != directory or temporary.parent != directory:
@@ -2081,7 +2102,7 @@ def _run_restore_drill(
         datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         + "_" + uuid.uuid4().hex[:12]
     )
-    filename = f"dbagent-audit-restore-drill-{drill_id}.json"
+    filename = f"dbquill-audit-restore-drill-{drill_id}.json"
     target_report = (directory / filename).resolve()
     temporary_database = (directory / f".{filename}.{uuid.uuid4().hex}.db.tmp").resolve()
     temporary_report = (directory / f".{filename}.{uuid.uuid4().hex}.tmp").resolve()
@@ -2216,7 +2237,7 @@ def verify_restore_drill(
     except ValueError as exc:
         raise ValueError("恢复演练报告时间无效") from exc
     if (
-        report.get("format") != RESTORE_DRILL_FORMAT
+        not _format_supported(report.get("format"), RESTORE_DRILL_FORMAT)
         or report.get("schema_version") != SCHEMA_VERSION
         or report_version not in {1, 2}
         or not re.fullmatch(r"[0-9]{14}_[0-9a-f]{12}", str(report.get("drill_id")))
@@ -2364,7 +2385,7 @@ def create_external_anchor(output_dir: Any) -> dict:
         "head_hash": str(integrity["head_hash"]),
     }
     anchor["payload_sha256"] = _anchor_payload_sha256(anchor)
-    filename = f"dbagent-audit-anchor-{anchor_id}.json"
+    filename = f"dbquill-audit-anchor-{anchor_id}.json"
     target = (directory / filename).resolve()
     if target.parent != directory:
         raise ValueError("外部锚点输出路径越界")
@@ -2398,7 +2419,7 @@ def verify_external_anchor(anchor_file: Any) -> dict:
     if not isinstance(anchor, dict) or set(anchor) != expected_keys:
         raise ValueError("外部锚点结构无效")
     if (
-        anchor["format"] != ANCHOR_FORMAT
+        not _format_supported(anchor["format"], ANCHOR_FORMAT)
         or anchor["schema_version"] != SCHEMA_VERSION
         or not re.fullmatch(r"[0-9]{14}_[0-9a-f]{12}", str(anchor["anchor_id"]))
         or not isinstance(anchor["event_count"], int)
@@ -2522,7 +2543,7 @@ def create_external_archive(
         "events": events,
     }
     archive["payload_sha256"] = _archive_payload_sha256(archive)
-    filename = f"dbagent-audit-archive-{archive_id}.json"
+    filename = f"dbquill-audit-archive-{archive_id}.json"
     target = (directory / filename).resolve()
     temporary = (directory / f".{filename}.{uuid.uuid4().hex}.tmp").resolve()
     if target.parent != directory or temporary.parent != directory:
@@ -2555,7 +2576,7 @@ def verify_external_archive(archive_file: Any) -> dict:
         raise ValueError("外部审计归档结构无效")
     events = archive.get("events")
     if (
-        archive.get("format") != ARCHIVE_FORMAT
+        not _format_supported(archive.get("format"), ARCHIVE_FORMAT)
         or archive.get("schema_version") != SCHEMA_VERSION
         or not re.fullmatch(r"[0-9]{14}_[0-9a-f]{12}", str(archive.get("archive_id")))
         or not isinstance(events, list)

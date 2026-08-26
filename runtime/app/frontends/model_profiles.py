@@ -1,4 +1,4 @@
-"""Local JSON storage for DB-Agent model connection profiles.
+"""Local JSON storage for DBQuill model connection profiles.
 
 The public repository contains only an empty example document.  The live file is
 created under ``runtime/app`` and is excluded from version control because it may

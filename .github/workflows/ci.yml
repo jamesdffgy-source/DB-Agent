@@ -33,10 +33,10 @@ jobs:
       - name: Run repository and product gates
         shell: pwsh
         run: |
-          $env:DBAGENT_PYTHON = (Resolve-Path '.\.venv\Scripts\python.exe').Path
+          $env:DBQUILL_PYTHON = (Resolve-Path '.\.venv\Scripts\python.exe').Path
           .\scripts\check_project.cmd
       - name: Probe authenticated startup
         shell: pwsh
         run: |
-          $env:DBAGENT_PYTHON = (Resolve-Path '.\.venv\Scripts\python.exe').Path
+          $env:DBQUILL_PYTHON = (Resolve-Path '.\.venv\Scripts\python.exe').Path
           .\scripts\run_python.cmd scripts\smoke_startup.py

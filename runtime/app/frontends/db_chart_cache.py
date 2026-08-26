@@ -12,7 +12,7 @@ from typing import Any, Optional
 
 
 _DATA_DIR = Path(__file__).resolve().parent / "data"
-_DB_PATH = _DATA_DIR / "dbagent_chart_cache.sqlite"
+_DB_PATH = _DATA_DIR / "dbquill_chart_cache.sqlite"
 _LOCK = threading.RLock()
 _SCHEMA_VERSION = 2
 _MAX_CHARTS = 128

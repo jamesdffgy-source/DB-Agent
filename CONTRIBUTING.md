@@ -1,6 +1,6 @@
-# Contributing to DB-Agent
+# Contributing to DBQuill
 
-DB-Agent treats natural-language database work as a safety-sensitive product. Changes should preserve the product boundary and architecture decisions documented under `docs/`.
+DBQuill treats natural-language database work as a safety-sensitive product. Changes should preserve the product boundary and architecture decisions documented under `docs/`.
 
 ## Before you start
 

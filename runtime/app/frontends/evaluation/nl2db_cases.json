@@ -2,7 +2,7 @@
   "schema_version": 1,
   "suite_version": "2026.08.17-v23",
   "reference_date": "2026-08-05",
-  "description": "DB-Agent 自研 NL-to-Database 固定评测集。离线规划使用人工标注的 oracle_intent，不评估模型意图分类；并列指标、维度、趋势、业务日历、OperationGraph、大 Schema、参考 SQL 和安全通道验证列明的确定性协议。独立真实模型通道包含 12 个固定 SQLite 查询，覆盖单表聚合、过滤、分组、反连接、多跳 JOIN、日期范围和零值保留；模型结果不并入离线总通过率。",
+  "description": "DBQuill 自研 NL-to-Database 固定评测集。离线规划使用人工标注的 oracle_intent，不评估模型意图分类；并列指标、维度、趋势、业务日历、OperationGraph、大 Schema、参考 SQL 和安全通道验证列明的确定性协议。独立真实模型通道包含 12 个固定 SQLite 查询，覆盖单表聚合、过滤、分组、反连接、多跳 JOIN、日期范围和零值保留；模型结果不并入离线总通过率。",
   "semantic_entries": [
     {
       "kind": "table_alias",

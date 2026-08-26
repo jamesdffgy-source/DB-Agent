@@ -1,11 +1,11 @@
 {
   "schema_version": 5,
-  "recorded_at": "2026-08-26T16:55:34+08:00",
-  "source_fingerprint": "6d8501c4226a6beb9106b2e03a4da954b4f1b90cd48ec29b09499b22b780dbff",
+  "recorded_at": "2026-08-27T01:43:12+08:00",
+  "source_fingerprint": "244f000768c26f72a46d10d8363e86eeb30d25bcd44144d408fd7a80b1f4650c",
   "controlled_file_count": 102,
   "python": "3.12.13",
   "test_command": "scripts/check_project.cmd",
-  "tests_passed": 413,
+  "tests_passed": 419,
   "evaluation": {
     "suite_version": "2026.08.17-v23",
     "offline_passed": 134,
@@ -52,5 +52,5 @@
     "credential_findings": 0,
     "redistributed_assets_verified": 2
   },
-  "summary": "Final public source release with warning-free workflows and verified assets"
+  "summary": "DBQuill v0.2.0 rename and controlled remote DML"
 }

@@ -1,8 +1,8 @@
-"""DB-Agent 本地语义目录持久化。
+"""DBQuill 本地语义目录持久化。
 
 语义定义按稳定数据库标识隔离，保存业务术语到表、字段、枚举值和受控指标的映射。
 本模块只负责八类语义定义的通用持久化；schema 校验与自然语言解析由
-dbagent_core.SemanticCatalog 完成。
+dbquill_core.SemanticCatalog 完成。
 """
 from __future__ import annotations
 

@@ -26,7 +26,7 @@ jobs:
       - name: Run release gate
         shell: pwsh
         run: |
-          $env:DBAGENT_PYTHON = (Resolve-Path '.\.venv\Scripts\python.exe').Path
+          $env:DBQUILL_PYTHON = (Resolve-Path '.\.venv\Scripts\python.exe').Path
           .\scripts\check_project.cmd
           .\scripts\run_python.cmd scripts\smoke_startup.py
       - name: Build versioned source archive
@@ -38,4 +38,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $assets = Get-ChildItem -LiteralPath dist -File | Select-Object -ExpandProperty FullName
-          gh release create $env:GITHUB_REF_NAME $assets --verify-tag --generate-notes --title "DB-Agent $env:GITHUB_REF_NAME"
+          gh release create $env:GITHUB_REF_NAME $assets --verify-tag --generate-notes --title "DBQuill $env:GITHUB_REF_NAME"

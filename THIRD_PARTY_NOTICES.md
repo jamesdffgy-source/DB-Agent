@@ -1,6 +1,6 @@
 # Third-party notices
 
-DB-Agent is MIT-licensed. The source repository also redistributes the following third-party artifacts under their own licenses.
+DBQuill is MIT-licensed. The source repository also redistributes the following third-party artifacts under their own licenses.
 
 ## Apache ECharts 5.5.1
 

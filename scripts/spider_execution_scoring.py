@@ -3,7 +3,7 @@
 The comparison contract follows the public Spider test-suite evaluator's
 denotation semantics: duplicate rows matter, result-column order may differ,
 and row order matters when the gold query requests ORDER BY.  This module is
-an independent bounded implementation for DB-Agent's released single-database
+an independent bounded implementation for DBQuill's released single-database
 evidence and official multi-database test-suite evidence.
 """
 
@@ -26,11 +26,11 @@ FRONTENDS = ROOT / "runtime" / "app" / "frontends"
 if str(FRONTENDS) not in sys.path:
     sys.path.insert(0, str(FRONTENDS))
 
-import dbagent_core as dc  # noqa: E402
+import dbquill_core as dc  # noqa: E402
 
 
-COMPARATOR_CONTRACT = "dbagent-spider-single-db-denotation-v1"
-TEST_SUITE_COMPARATOR_CONTRACT = "dbagent-spider-test-suite-denotation-v1"
+COMPARATOR_CONTRACT = "dbquill-spider-single-db-denotation-v1"
+TEST_SUITE_COMPARATOR_CONTRACT = "dbquill-spider-test-suite-denotation-v1"
 REFERENCE_IMPLEMENTATION = {
     "repository": "https://github.com/taoyds/test-suite-sql-eval",
     "commit": "e97acc546ecbee8fa27fa8dbf025ef61493a876c",
@@ -408,7 +408,7 @@ def score_test_suite(
     """Require denotation agreement on every supplied perturbation database.
 
     Values in the predicted SQL are evaluated as-is and are never replaced by
-    gold literals.  DB-Agent's read-only validation, timeout and result cap are
+    gold literals.  DBQuill's read-only validation, timeout and result cap are
     retained around every execution.
     """
     paths = [Path(path).resolve() for path in db_paths]

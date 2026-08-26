@@ -2,14 +2,29 @@
 setlocal
 set "PROJECT_ROOT=%~dp0.."
 
+if defined DBQUILL_PYTHON (
+  if not exist "%DBQUILL_PYTHON%" (
+    echo FAIL: DBQUILL_PYTHON does not exist: %DBQUILL_PYTHON% 1>&2
+    exit /b 1
+  )
+  "%DBQUILL_PYTHON%" -c "import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 12) else 1)" >nul 2>nul
+  if errorlevel 1 (
+    echo FAIL: DBQUILL_PYTHON must be CPython 3.12. 1>&2
+    exit /b 1
+  )
+  "%DBQUILL_PYTHON%" %*
+  exit /b %ERRORLEVEL%
+)
+
+rem v0.1 compatibility: honor the former variable only when DBQUILL_PYTHON is unset.
 if defined DBAGENT_PYTHON (
   if not exist "%DBAGENT_PYTHON%" (
-    echo FAIL: DBAGENT_PYTHON does not exist: %DBAGENT_PYTHON% 1>&2
+    echo FAIL: legacy Python override does not exist: %DBAGENT_PYTHON% 1>&2
     exit /b 1
   )
   "%DBAGENT_PYTHON%" -c "import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 12) else 1)" >nul 2>nul
   if errorlevel 1 (
-    echo FAIL: DBAGENT_PYTHON must be CPython 3.12. 1>&2
+    echo FAIL: legacy Python override must be CPython 3.12. 1>&2
     exit /b 1
   )
   "%DBAGENT_PYTHON%" %*

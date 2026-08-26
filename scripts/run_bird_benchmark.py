@@ -2,7 +2,7 @@
 
 The BIRD Mini-Dev package contains real SQLite database contents, questions,
 expert evidence and gold SQL.  This runner sends the question through
-DB-Agent's production NL2SQL and read-only SQLSecurity path, then compares the
+DBQuill's production NL2SQL and read-only SQLSecurity path, then compares the
 predicted and gold result sets on a separately opened physical read-only
 connection.  The primary metric follows BIRD's official Execution Accuracy
 definition: duplicate rows and row ordering are ignored.
@@ -40,7 +40,7 @@ FRONTENDS = ROOT / "runtime" / "app" / "frontends"
 if str(FRONTENDS) not in sys.path:
     sys.path.insert(0, str(FRONTENDS))
 
-import dbagent_core as dc  # noqa: E402
+import dbquill_core as dc  # noqa: E402
 from nl2db_evaluation import _redacted_model_identity  # noqa: E402
 
 
@@ -725,7 +725,7 @@ def _markdown(payload: dict) -> str:
     production = summary["production_query_success"]
     coverage = summary["coverage"]
     lines = [
-        "# DB-Agent BIRD Mini-Dev SQLite Benchmark",
+        "# DBQuill BIRD Mini-Dev SQLite Benchmark",
         "",
         f"- 运行状态：{payload['status']}",
         f"- 模型：{payload['model_identity'].get('model') or payload['model_identity'].get('name')}",
@@ -767,7 +767,7 @@ def _markdown(payload: dict) -> str:
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="DB-Agent BIRD Mini-Dev SQLite benchmark")
+    parser = argparse.ArgumentParser(description="DBQuill BIRD Mini-Dev SQLite benchmark")
     parser.add_argument("--package-root", type=Path, default=DEFAULT_PACKAGE_ROOT)
     parser.add_argument("--official-repo", type=Path, default=DEFAULT_OFFICIAL_REPO)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
@@ -782,7 +782,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--sample-rows", type=int, default=5)
     parser.add_argument("--eval-timeout", type=float, default=30.0)
     parser.add_argument("--max-eval-rows", type=int, default=200000)
-    parser.add_argument("--llm-cfg", default=os.environ.get("DBAGENT_MODEL_PROFILE", "default"))
+    parser.add_argument(
+        "--llm-cfg",
+        default=(
+            os.environ.get("DBQUILL_MODEL_PROFILE")
+            or os.environ.get("DBAGENT_MODEL_PROFILE")
+            or "default"
+        ),
+    )
     parser.add_argument("--omit-evidence", action="store_true")
     parser.add_argument(
         "--omit-descriptions", action="store_true",

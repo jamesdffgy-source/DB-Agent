@@ -4,7 +4,7 @@
 
 Read the [installation guide](docs/INSTALLATION.md), run `scripts\doctor.cmd`, and search existing issues before opening a new one. A useful report includes:
 
-- the DB-Agent release or commit;
+- the DBQuill release or commit;
 - Windows and Python versions;
 - the exact step that failed;
 - sanitized diagnostic output;

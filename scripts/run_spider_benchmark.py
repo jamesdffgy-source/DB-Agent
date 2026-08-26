@@ -2,7 +2,7 @@
 
 The official Spider repository contains the complete dev questions, gold SQL,
 schema metadata and evaluator, but not the database contents.  This runner can
-therefore build schema-faithful empty SQLite databases, execute DB-Agent's
+therefore build schema-faithful empty SQLite databases, execute DBQuill's
 production NL2SQL path against them, and score the raw generated SQL with the
 official value-insensitive Exact Set Match implementation.
 
@@ -41,7 +41,7 @@ FRONTENDS = ROOT / "runtime" / "app" / "frontends"
 if str(FRONTENDS) not in sys.path:
     sys.path.insert(0, str(FRONTENDS))
 
-import dbagent_core as dc  # noqa: E402
+import dbquill_core as dc  # noqa: E402
 from nl2db_evaluation import _redacted_model_identity  # noqa: E402
 
 
@@ -110,7 +110,7 @@ def _load_official_modules(repo: Path):
         sys.modules.pop("process_sql", None)
         import process_sql as process_sql_module  # noqa: PLC0415
 
-    spec = importlib.util.spec_from_file_location("dbagent_spider_evaluation", evaluation_path)
+    spec = importlib.util.spec_from_file_location("dbquill_spider_evaluation", evaluation_path)
     if spec is None or spec.loader is None:
         raise RuntimeError("无法加载 Spider 官方评测模块")
     evaluation_module = importlib.util.module_from_spec(spec)
@@ -208,10 +208,10 @@ def _create_schema_database(path: Path, schema: dict) -> None:
             # SQLite reserves sqlite_* object names.  An AUTOINCREMENT table
             # creates the real internal sqlite_sequence(name, seq) schema.
             connection.execute(
-                'CREATE TABLE "__dbagent_sequence_seed" '
+                'CREATE TABLE "__dbquill_sequence_seed" '
                 '("id" INTEGER PRIMARY KEY AUTOINCREMENT)'
             )
-            connection.execute('DROP TABLE "__dbagent_sequence_seed"')
+            connection.execute('DROP TABLE "__dbquill_sequence_seed"')
         for table_index, table_name in enumerate(table_names):
             if str(table_name).casefold() == "sqlite_sequence":
                 continue
@@ -247,7 +247,7 @@ def _create_schema_database(path: Path, schema: dict) -> None:
                     + ")"
                 )
             if not definitions:
-                definitions.append('"__dbagent_placeholder" INTEGER')
+                definitions.append('"__dbquill_placeholder" INTEGER')
             connection.execute(
                 f"CREATE TABLE {_quote_identifier(table_name)} (" + ", ".join(definitions) + ")"
             )
@@ -374,7 +374,7 @@ def _strip_projection_aliases(sql: str) -> str:
 def _official_parser_compatible_sql(sql: str, schema_record: dict) -> str:
     """Normalize valid SQLite syntax omitted by Spider's legacy parser.
 
-    SQLite and DB-Agent both accept ``FROM table alias``.  Spider 1.0's
+    SQLite and DBQuill both accept ``FROM table alias``.  Spider 1.0's
     process_sql.py, however, only records aliases introduced with ``AS`` and
     raises KeyError for the otherwise-valid shorthand. It also tokenizes the
     ``LEFT``/``INNER`` modifier as an alias even though the exact-set-match AST
@@ -893,7 +893,7 @@ def _markdown(payload: dict) -> str:
     exact_parseable = summary["exact_among_parseable"]
     coverage = summary["coverage"]
     lines = [
-        "# DB-Agent Spider 1.0 Dev Benchmark",
+        "# DBQuill Spider 1.0 Dev Benchmark",
         "",
         f"- 运行状态：`{payload['status']}`",
         f"- 模型：`{payload['model_identity'].get('model') or payload['model_identity'].get('name')}`",
@@ -934,14 +934,21 @@ def _markdown(payload: dict) -> str:
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="DB-Agent Spider 1.0 dev benchmark")
+    parser = argparse.ArgumentParser(description="DBQuill Spider 1.0 dev benchmark")
     parser.add_argument("--spider-repo", type=Path, default=DEFAULT_SPIDER_REPO)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--markdown", type=Path, default=DEFAULT_MARKDOWN)
     parser.add_argument("--sample-size", type=int, default=100, help="0 means all 1034 dev cases")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--workers", type=int, default=1)
-    parser.add_argument("--llm-cfg", default=os.environ.get("DBAGENT_MODEL_PROFILE", "default"))
+    parser.add_argument(
+        "--llm-cfg",
+        default=(
+            os.environ.get("DBQUILL_MODEL_PROFILE")
+            or os.environ.get("DBAGENT_MODEL_PROFILE")
+            or "default"
+        ),
+    )
     parser.add_argument(
         "--case-id", action="append", default=[],
         help="repeatable exact Spider case id for diagnostic reruns",

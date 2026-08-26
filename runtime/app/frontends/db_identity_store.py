@@ -1,4 +1,4 @@
-"""Local expiring credentials for DB-Agent.
+"""Local expiring credentials for DBQuill.
 
 Only SHA-256 token hashes are persisted. Raw tokens are returned once when a
 credential is issued and must never be written to logs or audit events.

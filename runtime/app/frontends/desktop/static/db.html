@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DB Agent · 对话式数据助手</title>
-<link rel="icon" type="image/png" href="dbagent-favicon-v2.png">
+<title>DBQuill · Natural-Language Database Agent</title>
+<link rel="icon" type="image/png" href="dbquill-favicon-v2.png">
 <style>
   :root {
     --bg: #07070c;
@@ -463,7 +463,7 @@
 <div class="app">
   <header class="topbar">
     <div class="brand">
-      <div class="brand-wordmark">DB AGENT</div>
+      <div class="brand-wordmark">DBQUILL</div>
     </div>
     <nav class="nav-tabs" id="navTabs">
       <button class="nav-tab active" data-view="sessions">会话</button>
@@ -898,7 +898,7 @@
 
 <div class="modal-mask" id="connectModal">
   <div class="modal">
-    <h3>连接远程数据库（只读）</h3>
+    <h3>连接远程数据库</h3>
     <div class="row">
       <div><label>类型</label><select id="cDialect"><option value="mysql">MySQL</option><option value="postgresql">PostgreSQL</option></select></div>
       <div><label>名称（可选，默认用库名）</label><input id="cName" placeholder="如 销售库"></div>
@@ -908,12 +908,14 @@
       <div><label>端口</label><input id="cPort" placeholder="MySQL 3306 / PG 5432"></div>
     </div>
     <div class="row">
-      <div><label>用户名</label><input id="cUser" placeholder="只读账号"></div>
+      <div><label>用户名</label><input id="cUser" placeholder="数据库账号"></div>
       <div><label>密码</label><input id="cPass" type="password"></div>
     </div>
     <div class="row">
       <div><label>数据库 / Schema</label><input id="cDatabase" placeholder="要查询的库名"></div>
+      <div><label>访问模式</label><select id="cAccessMode"><option value="read" selected>只读（推荐）</option><option value="write">受控读写</option></select></div>
     </div>
+    <small>受控读写仅开放 INSERT、UPDATE、DELETE；所有变更先回滚预览，再由操作员或管理员确认。数据库账号还必须具备相应权限。</small>
     <div class="actions">
       <button class="btn" id="cCancel">取消</button>
       <button class="btn primary" id="cSubmit">连接并接入</button>
@@ -1071,14 +1073,25 @@
 <script src="vendor/echarts.min.js"></script>
 <script>
 'use strict';
-/* ================= DB Agent 前端逻辑 ================= */
+/* ================= DBQuill 前端逻辑 ================= */
 const $ = (s, el) => (el || document).querySelector(s);
 const $$ = (s, el) => [...(el || document).querySelectorAll(s)];
 
+const legacySessionId = localStorage.getItem('dbagent_sid') || '';
+const legacyModelProfile = localStorage.getItem('dbagent_model_profile') || '';
+if (!localStorage.getItem('dbquill_sid') && legacySessionId) {
+  localStorage.setItem('dbquill_sid', legacySessionId);
+}
+if (!localStorage.getItem('dbquill_model_profile') && legacyModelProfile) {
+  localStorage.setItem('dbquill_model_profile', legacyModelProfile);
+}
+localStorage.removeItem('dbagent_sid');
+localStorage.removeItem('dbagent_model_profile');
+
 const state = {
   dbId: '',
-  sessionId: localStorage.getItem('dbagent_sid') || '',
-  llmCfg: localStorage.getItem('dbagent_model_profile') || 'default',
+  sessionId: localStorage.getItem('dbquill_sid') || '',
+  llmCfg: localStorage.getItem('dbquill_model_profile') || 'default',
   running: null,          // 当前运行中的 runId
   pollTimer: null,
   dbs: [],
@@ -1257,7 +1270,7 @@ async function deleteSession(s) {
     await api('/db/session/' + encodeURIComponent(s.id), { method: 'DELETE' });
     if (state.sessionId === s.id) {
       state.sessionId = '';
-      localStorage.removeItem('dbagent_sid');
+      localStorage.removeItem('dbquill_sid');
       buildWelcome();
     }
     loadSessions();
@@ -1359,7 +1372,7 @@ async function loadSessions() {
 async function openSession(s) {
   state.sessionId = s.id;
   state.dbId = s.dbId || state.dbId;
-  localStorage.setItem('dbagent_sid', s.id);
+  localStorage.setItem('dbquill_sid', s.id);
   renderDbChip();
   loadSessions();
   let messages = [];
@@ -1452,7 +1465,7 @@ async function ask(question) {
     state.running = run.id;
     if (run.sessionId && run.sessionId !== state.sessionId) {
       state.sessionId = run.sessionId;
-      localStorage.setItem('dbagent_sid', run.sessionId);
+      localStorage.setItem('dbquill_sid', run.sessionId);
       renderDbChip();
     }
     await poll(run.id);
@@ -1501,7 +1514,7 @@ async function cancelRun() {
 }
 function writeActionError(error) {
   if (error && (error.status === 401 || error.status === 403)) {
-    return '当前窗口没有处理写入的本机授权，请完全退出后从 DB-Agent 桌面图标重新打开。';
+    return '当前窗口没有处理写入的本机授权，请完全退出后从 DBQuill 桌面图标重新打开。';
   }
   if (error && error.status === 404) {
     return '这份确认单已失效或数据库已切换，请重新提出写入要求。';
@@ -2366,7 +2379,7 @@ function resetDbDependentViews() {
 function chooseDatabase(dbId) {
   state.dbId = dbId;
   state.sessionId = '';
-  localStorage.removeItem('dbagent_sid');
+  localStorage.removeItem('dbquill_sid');
   inp.value = '';
   autoGrow();
   buildWelcome();
@@ -2520,7 +2533,7 @@ $('#mSave').onclick = async () => {
       const j = await api('/model-profiles', { method: 'POST', body: JSON.stringify(payload) });
       if (j.profileKey) {
         state.llmCfg = j.profileKey;
-        localStorage.setItem('dbagent_model_profile', state.llmCfg);
+        localStorage.setItem('dbquill_model_profile', state.llmCfg);
       }
       toast('已新增并设为默认');
     }
@@ -2545,7 +2558,7 @@ $('#mDelete').onclick = async () => {
 $('#mSetDefault').onclick = () => {
   if (!_settingsEdit.profileKey) { toast('请先在左侧选择一个配置'); return; }
   state.llmCfg = _settingsEdit.profileKey;
-  localStorage.setItem('dbagent_model_profile', state.llmCfg);
+  localStorage.setItem('dbquill_model_profile', state.llmCfg);
   renderModelChip();
   renderModelProfileList();
   toast('已设为当前默认模型');
@@ -2649,6 +2662,7 @@ $('#cSubmit').onclick = async () => {
     password: $('#cPass').value,
     database: $('#cDatabase').value.trim(),
     name: $('#cName').value.trim(),
+    writeEnabled: $('#cAccessMode').value === 'write',
   };
   if (!payload.database) { toast('请填写数据库 / Schema 名'); return; }
   try {
@@ -2853,7 +2867,7 @@ async function exportAudit() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `dbagent-audit-${state.dbId}-${new Date().toISOString().slice(0, 10)}.json`;
+    link.download = `dbquill-audit-${state.dbId}-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -3814,7 +3828,7 @@ async function exportSemanticCatalog() {
     const result = await api('/db/semantics/export?dbId=' + encodeURIComponent(state.dbId));
     const db = state.dbs.find(item => item.id === state.dbId);
     const safeName = String(db && db.name || 'database').replace(/[^0-9A-Za-z\u4e00-\u9fff_-]+/g, '-').replace(/^-+|-+$/g, '') || 'database';
-    semanticDownload('dbagent-semantics-' + safeName + '.json', result.catalog);
+    semanticDownload('dbquill-semantics-' + safeName + '.json', result.catalog);
     toast('语义配置已导出');
   } catch (e) { toast('导出失败：' + e.message); }
 }
@@ -4064,7 +4078,7 @@ async function autoCharts(forceRefresh = false) {
       const observer = new IntersectionObserver(entries => {
         entries.forEach(entry => {
           if (!entry.isIntersecting) return;
-          const render = entry.target._dbagentRenderChart;
+          const render = entry.target._dbquillRenderChart;
           if (typeof render === 'function') render();
           observer.unobserve(entry.target);
         });
@@ -4114,7 +4128,7 @@ async function autoCharts(forceRefresh = false) {
       card.appendChild(body);
       box.appendChild(card);
       const render = () => renderChartCanvas(body, c, m, paletteOffset);
-      body._dbagentRenderChart = render;
+      body._dbquillRenderChart = render;
       if (chartObserver) chartObserver.observe(body); else render();
     });
   } catch (e) {

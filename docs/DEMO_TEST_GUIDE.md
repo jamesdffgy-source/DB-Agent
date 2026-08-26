@@ -1,6 +1,6 @@
-# DB-Agent 演示数据库测试指南
+# DBQuill 演示数据库测试指南
 
-演示数据库：项目根目录下 `demo_data\dbagent_demo.sqlite`（当前工作区为 `D:\DB-Agent - 副本\demo_data\dbagent_demo.sqlite`）
+演示数据库：项目根目录下 `demo_data\dbquill_demo.sqlite`。
 
 - 数据集版本：`2026.08.18-v1`
 - 参考日期：`2026-08-18`
@@ -11,16 +11,16 @@
 
 ## 一、开始测试
 
-1. 如果演示库不存在，先在项目根目录运行 `.\runtime\python\python.exe .\scripts\create_demo_database.py`。
-2. 完整重启 DB-Agent，确保后端和前端加载当前代码。
+1. 如果演示库不存在，先在项目根目录运行 `.\scripts\run_python.cmd .\scripts\create_demo_database.py`。
+2. 完整重启 DBQuill，确保后端和前端加载当前代码。
 3. 点击左侧会话区底部“+”，在选库浮层中选择“上传数据”。
-4. 选择 `demo_data\dbagent_demo.sqlite`；上传完成后页面会自动切换到新库并开始新对话，无需再操作旧数据库下拉框。
+4. 选择 `demo_data\dbquill_demo.sqlite`；上传完成后页面会自动切换到新库并开始新对话，无需再操作旧数据库下拉框。
 5. 先执行只读测试，再执行写入测试，避免标准答案被修改。
 
 如果写入或改表测试改变了数据，可在项目根目录运行：
 
 ```powershell
-.\runtime\python\python.exe .\scripts\create_demo_database.py --force
+.\scripts\run_python.cmd .\scripts\create_demo_database.py --force
 ```
 
 重置后应从工作区摘下旧数据源并重新上传；如果修改过表结构，建议完整重启桌面应用，避免继续使用旧 Schema 缓存。

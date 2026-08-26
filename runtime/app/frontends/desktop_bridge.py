@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DB-Agent 本地 HTTP/WS 桥接。
+"""DBQuill 本地 HTTP/WS 桥接。
 
 这里只承载当前产品主链：本地鉴权、模型配置、数据源、NL-to-Database、
 写入确认、会话、图表、语义目录、审计与调度。WebSocket 仅用于桥接存活通知，
@@ -52,7 +52,7 @@ APP_DIR = Path(__file__).resolve().parent
 
 
 def find_app_root() -> Path:
-    """Return the fixed DB-Agent runtime directory (``runtime/app``)."""
+    """Return the fixed DBQuill runtime directory (``runtime/app``)."""
     return APP_DIR.parent.resolve()
 
 
@@ -81,10 +81,11 @@ def _load_bridge_token() -> str:
 
 
 BRIDGE_TOKEN = _load_bridge_token()
-_AUTH_COOKIE = "dbagent_bridge_token"
+_AUTH_COOKIE = "dbquill_bridge_token"
+_LEGACY_AUTH_COOKIE = "dbagent_bridge_token"
 _ROLE_TOKENS = _access_control.derive_role_tokens(BRIDGE_TOKEN)
-_REQUEST_ROLE = contextvars.ContextVar("dbagent_request_role", default="admin")
-_REQUEST_PRINCIPAL = contextvars.ContextVar("dbagent_request_principal", default=None)
+_REQUEST_ROLE = contextvars.ContextVar("dbquill_request_role", default="admin")
+_REQUEST_PRINCIPAL = contextvars.ContextVar("dbquill_request_principal", default=None)
 
 
 def _current_role() -> str:
@@ -243,9 +244,11 @@ def cors_headers():
 
 def _request_token(request) -> str:
     return str(
-        request.headers.get("X-DBAgent-Token")
+        request.headers.get("X-DBQuill-Token")
+        or request.headers.get("X-DBAgent-Token")
         or request.query.get("token")
         or request.cookies.get(_AUTH_COOKIE)
+        or request.cookies.get(_LEGACY_AUTH_COOKIE)
         or ""
     )
 
@@ -266,6 +269,12 @@ def _set_auth_cookie(resp: web.StreamResponse, token: str) -> None:
         path="/",
         max_age=365 * 24 * 60 * 60,
     )
+
+
+def _set_role_headers(resp: web.StreamResponse, role: str) -> None:
+    resp.headers["X-DBQuill-Role"] = role
+    # Response compatibility for local v0.1 integrations.
+    resp.headers["X-DBAgent-Role"] = role
 
 
 @web.middleware
@@ -338,14 +347,16 @@ async def cors_middleware(request, handler):
                 },
             )
             _set_auth_cookie(resp, supplied)
-            resp.headers["X-DBAgent-Role"] = role
+            _set_role_headers(resp, role)
             return resp
         if request.method == "OPTIONS":
-            return web.Response(status=204, headers={"X-DBAgent-Role": role})
+            resp = web.Response(status=204)
+            _set_role_headers(resp, role)
+            return resp
         resp = await handler(request)
         if request.cookies.get(_AUTH_COOKIE) != supplied:
             _set_auth_cookie(resp, supplied)
-        resp.headers["X-DBAgent-Role"] = role
+        _set_role_headers(resp, role)
         return resp
     finally:
         _REQUEST_PRINCIPAL.reset(principal_context)
@@ -735,7 +746,7 @@ async def upload_handler(request):
         fpath, safe_name = _uploads.store(data.get("sid") or "", original_name, blob)
     except UploadStorageError as exc:
         return json_ok({"ok": False, "error": str(exc)})
-    # 上传的是 sqlite → 自动 attach 到 /db/*（供 DB Agent 直接对话）；csv → 先转 sqlite 再 attach
+    # 上传的是 sqlite → 自动 attach 到 /db/*（供 DBQuill 直接对话）；csv → 先转 sqlite 再 attach
     auto_db = None
     if ext == ".csv":
         try:
@@ -797,12 +808,12 @@ async def upload_handler(request):
     return json_ok(resp)
 
 
-# DB Agent —— /db/* 的 NL-to-Database 入口
-# 依赖 frontends/dbagent_core.py（规划、查询、检索、写入安全与执行核心）
+# DBQuill —— /db/* 的 NL-to-Database 入口
+# 依赖 frontends/dbquill_core.py（规划、查询、检索、写入安全与执行核心）
 # ---------------------------------------------------------------------------
 
 _DB_AGENT_DBS: Dict[str, dict] = {}   # dbId -> {id,name,path,tables,attachedAt}
-_DB_AGENT_CACHE: Dict[str, Any] = {}  # dbId -> DBAgent 实例（懒加载）
+_DB_AGENT_CACHE: Dict[str, Any] = {}  # dbId -> DBQuillAgent 实例（懒加载）
 _DB_RUNS: Dict[str, dict] = {}        # runId -> 进度/结果
 _DB_RUN_CANCEL_EVENTS: Dict[str, threading.Event] = {}
 _DB_RUNS_MAX = 200
@@ -812,23 +823,33 @@ _SEMANTIC_IMPORT_TTL_SECONDS = 5 * 60
 _SEMANTIC_IMPORT_MAX_PENDING = 100
 _SEMANTIC_IMPORT_MAX_BYTES = 512 * 1024
 _SEMANTIC_IMPORT_REQUEST_MAX_BYTES = 640 * 1024
-_SEMANTIC_EXPORT_FORMAT = "dbagent-semantic-catalog"
+_SEMANTIC_EXPORT_FORMAT = "dbquill-semantic-catalog"
+_SEMANTIC_IMPORT_FORMATS = frozenset({_SEMANTIC_EXPORT_FORMAT, "dbagent-semantic-catalog"})
 _SEMANTIC_EXPORT_SCHEMA_VERSION = 8
 _SEMANTIC_IMPORT_SCHEMA_VERSIONS = frozenset({1, 2, 3, 4, 5, 6, 7, 8})
 
 
 def _db_agent_core():
-    """懒加载 dbagent_core（同目录），失败时抛清晰错误而不是弄崩 bridge。"""
+    """懒加载 dbquill_core（同目录），失败时抛清晰错误而不是弄崩 bridge。"""
     import sys as _sys
     from pathlib import Path as _Path
     here = str(_Path(__file__).resolve().parent)
     if here not in _sys.path:
         _sys.path.insert(0, here)
     try:
-        import dbagent_core
+        import dbquill_core
     except Exception as exc:
-        raise RuntimeError(f"dbagent_core 加载失败: {exc}") from exc
-    return dbagent_core
+        raise RuntimeError(f"dbquill_core 加载失败: {exc}") from exc
+    return dbquill_core
+
+
+def _default_model_profile() -> str:
+    """Prefer the DBQuill setting while accepting the v0.1 environment name."""
+    return str(
+        os.environ.get("DBQUILL_MODEL_PROFILE")
+        or os.environ.get("DBAGENT_MODEL_PROFILE")
+        or "default"
+    ).strip() or "default"
 
 
 def _db_semantic_key(entry: dict) -> str:
@@ -1647,6 +1668,7 @@ def _db_sanitize(entry: dict) -> dict:
     if _row_scopes_for_entry(entry):
         v["rowScopeRestricted"] = True
     if "conn" in v:
+        v["writeEnabled"] = bool(v["conn"].get("write_enabled"))
         v["conn"] = {k: ("***" if k == "password" else val) for k, val in v["conn"].items()}
     if _current_role() == "viewer":
         v.pop("path", None)
@@ -1666,11 +1688,11 @@ def _db_view(db_id: str) -> dict:
 
 
 def _db_get_agent(db_id: str, llm_cfg=None):
-    """按 dbId 取（并缓存）DBAgent 实例；llm_cfg 变化时自动重建。"""
+    """按 dbId 取（并缓存）DBQuillAgent 实例；llm_cfg 变化时自动重建。"""
     entry = _db_entry(db_id)
     if not entry:
         raise ValueError(f"database not attached: {db_id}")
-    cfg = (llm_cfg or "").strip() or os.environ.get("DBAGENT_MODEL_PROFILE", "default")
+    cfg = (llm_cfg or "").strip() or _default_model_profile()
     allowed_tables = _table_scope_for_entry(entry)
     if allowed_tables is not None:
         allowed_columns = _column_scopes_for_entry(entry)
@@ -1690,14 +1712,14 @@ def _db_get_agent(db_id: str, llm_cfg=None):
             raise ValueError("表级授权目前仅支持本地 SQLite 数据库")
         conn_kw["db_path"] = entry["path"]
         try:
-            agent = dc.DBAgent(
+            agent = dc.DBQuillAgent(
                 llm_cfg=cfg,
                 semantic_entries=_db_semantics(entry),
                 **conn_kw,
             )
         except ValueError:
-            cfg = os.environ.get("DBAGENT_MODEL_PROFILE", "default")
-            agent = dc.DBAgent(
+            cfg = _default_model_profile()
+            agent = dc.DBQuillAgent(
                 llm_cfg=cfg,
                 semantic_entries=_db_semantics(entry),
                 **conn_kw,
@@ -1713,10 +1735,10 @@ def _db_get_agent(db_id: str, llm_cfg=None):
         else:
             conn_kw["db_path"] = entry["path"]
         try:
-            agent = dc.DBAgent(llm_cfg=cfg, semantic_entries=_db_semantics(entry), **conn_kw)
+            agent = dc.DBQuillAgent(llm_cfg=cfg, semantic_entries=_db_semantics(entry), **conn_kw)
         except ValueError:
-            cfg = os.environ.get("DBAGENT_MODEL_PROFILE", "default")
-            agent = dc.DBAgent(llm_cfg=cfg, semantic_entries=_db_semantics(entry), **conn_kw)
+            cfg = _default_model_profile()
+            agent = dc.DBQuillAgent(llm_cfg=cfg, semantic_entries=_db_semantics(entry), **conn_kw)
         agent._llm_cfg = cfg
         _DB_AGENT_CACHE[db_id] = agent
     return _DB_AGENT_CACHE[db_id]
@@ -2089,6 +2111,7 @@ async def db_connect_handler(request):
         "user": str(data.get("user") or "").strip(),
         "password": str(data.get("password") or ""),
         "database": str(data.get("database") or "").strip(),
+        "write_enabled": data.get("writeEnabled") is True,
     }
     if not cfg["host"] or not cfg["user"] or not cfg["database"]:
         return json_ok({"ok": False, "error": "host / user / database 必填"}, status=400)
@@ -2132,7 +2155,7 @@ async def db_detach_handler(request):
 
 _DB_SESSIONS: Dict[str, dict] = {}  # sessionId -> 会话记录（内存热缓存；持久权威在 db_sessions_store）
 _DB_SESSIONS_MAX = 100
-_DB_SESSION_HISTORY_MAX = 14  # 与 dbagent_core._HISTORY_MAX_MSGS 对齐（约 7 轮）
+_DB_SESSION_HISTORY_MAX = 14  # 与 dbquill_core._HISTORY_MAX_MSGS 对齐（约 7 轮）
 _DB_SESSION_DISPLAY_ROWS_MAX = 500  # 与只读查询物化硬上限一致；桌面默认只展开 10 行
 _DB_SESSION_DISPLAY_BYTES_MAX = 700 * 1024
 
@@ -2509,7 +2532,7 @@ async def db_session_delete_handler(request):
 
 
 # ---------------------------------------------------------------------------
-# DB Agent —— 图表数据 API（只读聚合，白名单校验，防注入）
+# DBQuill —— 图表数据 API（只读聚合，白名单校验，防注入）
 # ---------------------------------------------------------------------------
 _CHART_AGGS = {"count", "sum", "avg", "max", "min"}
 _CHART_AGG_CN = {"count": "计数", "sum": "求和", "avg": "平均", "max": "最大", "min": "最小"}
@@ -3414,7 +3437,7 @@ async def db_semantics_import_preflight_handler(request):
         ).encode("utf-8")
         if len(payload_bytes) > _SEMANTIC_IMPORT_MAX_BYTES:
             raise ValueError("语义配置不能超过 512 KB")
-        if catalog_payload.get("format") != _SEMANTIC_EXPORT_FORMAT:
+        if catalog_payload.get("format") not in _SEMANTIC_IMPORT_FORMATS:
             raise ValueError("语义配置 format 不受支持")
         if catalog_payload.get("schema_version") not in _SEMANTIC_IMPORT_SCHEMA_VERSIONS:
             raise ValueError("语义配置 schema_version 不受支持")
@@ -3794,7 +3817,7 @@ async def db_audit_backup_create_handler(request):
 
 
 # ---------------------------------------------------------------------------
-# DB Agent —— 定时操作（db_scheduler 模块的 HTTP 封装）
+# DBQuill —— 定时操作（db_scheduler 模块的 HTTP 封装）
 # ---------------------------------------------------------------------------
 def _db_sched_resolver(db_id: str):
     """把 dbId 解析为 db_scheduler 可用的 {path, conn}。"""
@@ -4572,5 +4595,5 @@ def create_app():
 if __name__ == "__main__":
     host = os.environ.get("BRIDGE_HOST", "127.0.0.1")
     port = int(os.environ.get("BRIDGE_PORT", "14169"))
-    print(f"DB-Agent bridge: http://{host}:{port}  ws://{host}:{port}/ws", file=sys.stderr)
+    print(f"DBQuill bridge: http://{host}:{port}  ws://{host}:{port}/ws", file=sys.stderr)
     web.run_app(create_app(), host=host, port=port, print=None)

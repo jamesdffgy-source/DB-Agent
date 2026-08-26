@@ -1,4 +1,4 @@
-"""Local role-token derivation and HTTP permission policy for DB-Agent."""
+"""Local role-token derivation and HTTP permission policy for DBQuill."""
 from __future__ import annotations
 
 import base64

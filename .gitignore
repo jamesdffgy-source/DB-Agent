@@ -40,5 +40,5 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Unrelated local reference document; not part of DB-Agent.
+# Unrelated local reference document; not part of DBQuill.
 /*.docx

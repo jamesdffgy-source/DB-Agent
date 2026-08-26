@@ -1,6 +1,6 @@
 # Code of Conduct
 
-DB-Agent welcomes people who want to improve safe, understandable database software.
+DBQuill welcomes people who want to improve safe, understandable database software.
 
 ## Expected behavior
 

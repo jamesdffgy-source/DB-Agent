@@ -1,6 +1,6 @@
 # Installation
 
-DB-Agent currently ships as a source-first Windows desktop application. It does not yet provide a signed native installer.
+DBQuill currently ships as a source-first Windows desktop application. It does not yet provide a signed native installer.
 
 ## Supported environment
 
@@ -10,7 +10,7 @@ DB-Agent currently ships as a source-first Windows desktop application. It does 
 | Python | CPython 3.12; CI selects an available 3.12 patch release |
 | Web renderer | Microsoft Edge WebView2 Runtime |
 | Network | Required once to clone and install locked Python packages; required later only for the configured model endpoint |
-| Databases | SQLite; CSV/`.xlsx` import; read-only MySQL 8.4 and PostgreSQL 17 paths |
+| Databases | SQLite; CSV/`.xlsx` import; MySQL 8.4 and PostgreSQL 17 read paths plus opt-in controlled DML |
 
 The source workflow has been validated in a fresh export and in GitHub-hosted Windows CI. Other Python versions, Windows on ARM, macOS, and Linux are not release targets yet.
 
@@ -19,8 +19,8 @@ The source workflow has been validated in a fresh export and in GitHub-hosted Wi
 Open PowerShell or Command Prompt:
 
 ```powershell
-git clone https://github.com/jamesdffgy-source/DB-Agent.git
-cd DB-Agent
+git clone https://github.com/jamesdffgy-source/DBQuill.git
+cd DBQuill
 .\scripts\install_and_start.cmd
 ```
 
@@ -37,21 +37,22 @@ No database or model credential is required to install the application.
 ```powershell
 .\scripts\bootstrap_dev.cmd
 .\scripts\doctor.cmd
-.\scripts\start_dbagent.cmd
+.\scripts\start_dbquill.cmd
 ```
 
 If Python discovery is ambiguous, select a specific Python 3.12 executable for the current terminal:
 
 ```powershell
-$env:DBAGENT_PYTHON = 'C:\Path\To\Python312\python.exe'
+$env:DBQUILL_PYTHON = 'C:\Path\To\Python312\python.exe'
 .\scripts\bootstrap_dev.cmd
 ```
 
 ## First run
 
 1. Open **Settings** and create a model profile for an OpenAI-compatible text endpoint.
-2. Use **Add database** to attach a SQLite file, import CSV/`.xlsx`, or create a read-only MySQL/PostgreSQL connection.
-3. Use synthetic data for the first test. The included demo is created with:
+2. Use **Add database** to attach a SQLite file, import CSV/`.xlsx`, or create a MySQL/PostgreSQL connection. Remote connections default to read-only; choose **Controlled read/write** only for an account that should be allowed to propose DML.
+3. Controlled remote writes support `INSERT`, bounded `UPDATE`, and bounded `DELETE`. Each proposal runs in a rollback-only preview transaction and still requires explicit role-based confirmation. Remote DDL is blocked.
+4. Use synthetic data for the first test. The included demo is created with:
 
 ```powershell
 .\scripts\run_python.cmd scripts\create_demo_database.py
@@ -89,4 +90,4 @@ The committed lock file makes versions and hashes reproducible, but the reposito
 
 ## Uninstall
 
-Stop the desktop app, then remove the cloned directory. DB-Agent does not install a Windows service or write application credentials into the repository. Back up any local databases or audit exports you want to retain before removal.
+Stop the desktop app, then remove the cloned directory. DBQuill does not install a Windows service or write application credentials into the repository. Back up any local databases or audit exports you want to retain before removal.

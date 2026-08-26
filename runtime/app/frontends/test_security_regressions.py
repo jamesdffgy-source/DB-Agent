@@ -34,7 +34,7 @@ import db_chart_cache
 import db_identity_store
 import db_sessions_store
 import db_semantic_store
-import dbagent_core as dc
+import dbquill_core as dc
 import desktop_bridge
 import model_baseline_contract as model_baselines
 import model_profiles
@@ -1146,7 +1146,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
         )
         response = await self.client.post(
             "/db/auth/credentials",
-            headers={"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN},
+            headers={"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN},
             json={
                 "label": f"限定{role}", "role": role, "ttlHours": 24,
                 "databaseScope": {
@@ -1163,7 +1163,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
         )
         response = await self.client.post(
             "/db/auth/credentials",
-            headers={"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN},
+            headers={"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN},
             json={
                 "label": f"table-{role}", "role": role, "ttlHours": 24,
                 "databaseScope": {
@@ -1184,7 +1184,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
     async def test_valid_header_is_accepted_without_cors(self):
         response = await self.client.get(
             "/status",
-            headers={"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN},
+            headers={"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN},
         )
         self.assertEqual(response.status, 200)
         self.assertTrue((await response.json())["authRequired"])
@@ -1193,7 +1193,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
     async def test_legacy_xls_upload_is_rejected_before_file_write(self):
         response = await self.client.post(
             "/upload",
-            headers={"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN},
+            headers={"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN},
             json={
                 "name": "legacy.XLS",
                 "dataUrl": "not-valid-base64",
@@ -1217,7 +1217,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
 
         response = await self.client.post(
             "/upload",
-            headers={"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN},
+            headers={"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN},
             json={
                 "name": "sample.sqlite",
                 "dataUrl": (
@@ -1243,7 +1243,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
         csv_bytes = "id,name\n1,alpha\n2,beta\n".encode("utf-8")
         response = await self.client.post(
             "/upload",
-            headers={"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN},
+            headers={"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN},
             json={
                 "name": "sample.csv",
                 "dataUrl": (
@@ -1273,7 +1273,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
         response = await self.client.get(
             "/status",
             headers={
-                "X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN,
+                "X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN,
                 "Origin": "https://attacker.invalid",
             },
         )
@@ -1293,8 +1293,8 @@ class LocalApiAuthTests(AioHTTPTestCase):
     async def test_derived_role_tokens_are_distinct_and_permission_matrix_is_enforced(self):
         tokens = desktop_bridge._ROLE_TOKENS
         self.assertEqual(len(set(tokens.values())), 3)
-        viewer_headers = {"X-DBAgent-Token": tokens["viewer"]}
-        operator_headers = {"X-DBAgent-Token": tokens["operator"]}
+        viewer_headers = {"X-DBQuill-Token": tokens["viewer"]}
+        operator_headers = {"X-DBQuill-Token": tokens["operator"]}
 
         status = await self.client.get("/status", headers=viewer_headers)
         self.assertEqual(status.status, 200)
@@ -1344,10 +1344,20 @@ class LocalApiAuthTests(AioHTTPTestCase):
         )
         self.assertEqual(response.status, 302)
         self.assertEqual(response.cookies[desktop_bridge._AUTH_COOKIE].value, viewer_token)
+        self.assertEqual(response.headers["X-DBQuill-Role"], "viewer")
+
+    async def test_v01_auth_header_is_accepted_and_response_is_dual_named(self):
+        viewer_token = desktop_bridge._ROLE_TOKENS["viewer"]
+        response = await self.client.get(
+            "/db/auth/context",
+            headers={"X-DBAgent-Token": viewer_token},
+        )
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.headers["X-DBQuill-Role"], "viewer")
         self.assertEqual(response.headers["X-DBAgent-Role"], "viewer")
 
     async def test_expiring_credential_can_be_issued_used_audited_and_revoked(self):
-        admin_headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        admin_headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
         issued = await self.client.post(
             "/db/auth/credentials", headers=admin_headers,
             json={
@@ -1367,7 +1377,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
         credential_ref = credential["credentialRef"]
         self.assertTrue(token.startswith("id_"))
 
-        credential_headers = {"X-DBAgent-Token": token}
+        credential_headers = {"X-DBQuill-Token": token}
         status = await self.client.get("/status", headers=credential_headers)
         status_payload = await status.json()
         self.assertEqual(status_payload["access"]["role"], "operator")
@@ -1417,7 +1427,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
         self.assertEqual(db_audit_store.reconciliation_status()["unresolved_count"], 0)
 
     async def test_credential_issue_fails_closed_when_audit_is_unavailable(self):
-        headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
         with mock.patch.object(desktop_bridge, "_audit_store", None):
             response = await self.client.post(
                 "/db/auth/credentials", headers=headers,
@@ -1430,7 +1440,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
         self.assertEqual(db_identity_store.list_credentials(), [])
 
     async def test_restricted_credential_filters_databases_and_blocks_body_db_id(self):
-        admin_headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        admin_headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
         allowed_ref = desktop_bridge._database_scope_ref(
             desktop_bridge._DB_AGENT_DBS[self.role_db_id],
         )
@@ -1445,7 +1455,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
         )
         self.assertEqual(issued.status, 201)
         token = (await issued.json())["credential"]["token"]
-        headers = {"X-DBAgent-Token": token}
+        headers = {"X-DBQuill-Token": token}
 
         context = await self.client.get("/db/auth/context", headers=headers)
         access = (await context.json())["access"]
@@ -1494,7 +1504,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
         self.assertEqual(scope_denials[0]["details"]["database_scope_count"], 1)
 
     async def test_credential_issue_requires_explicit_known_database_scope(self):
-        headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
         missing = await self.client.post(
             "/db/auth/credentials", headers=headers,
             json={"label": "缺少范围", "role": "viewer", "ttlHours": 24},
@@ -1551,7 +1561,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
 
     async def test_table_scope_filters_schema_sessions_runs_schedules_and_audit(self):
         credential = await self._issue_table_restricted("admin")
-        headers = {"X-DBAgent-Token": credential["token"]}
+        headers = {"X-DBQuill-Token": credential["token"]}
         database_ref = desktop_bridge._database_scope_ref(
             desktop_bridge._DB_AGENT_DBS[self.role_db_id],
         )
@@ -1634,7 +1644,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
         entry = desktop_bridge._DB_AGENT_DBS[self.role_db_id]
         entry.update({"path": str(path), "tables": ["items"]})
         database_ref = desktop_bridge._database_scope_ref(entry)
-        admin_headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        admin_headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
 
         unknown = await self.client.post(
             "/db/auth/credentials", headers=admin_headers,
@@ -1668,7 +1678,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
             credential["databaseScope"]["columnScopes"],
             {database_ref: {"items": ["id", "public"]}},
         )
-        headers = {"X-DBAgent-Token": credential["token"]}
+        headers = {"X-DBQuill-Token": credential["token"]}
         context = await self.client.get("/db/auth/context", headers=headers)
         self.assertEqual((await context.json())["access"]["databaseScope"], {
             "mode": "restricted", "databaseCount": 1,
@@ -1749,7 +1759,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
         entry = desktop_bridge._DB_AGENT_DBS[self.role_db_id]
         entry.update({"path": str(path), "tables": ["items"]})
         database_ref = desktop_bridge._database_scope_ref(entry)
-        admin_headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        admin_headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
 
         unknown = await self.client.post(
             "/db/auth/credentials", headers=admin_headers,
@@ -1788,7 +1798,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
                 {"column": "tenant", "operator": "eq", "value": "tenant-a"},
             ]}},
         )
-        headers = {"X-DBAgent-Token": credential["token"]}
+        headers = {"X-DBQuill-Token": credential["token"]}
         context = await self.client.get("/db/auth/context", headers=headers)
         access = (await context.json())["access"]
         self.assertEqual(access["databaseScope"]["rowScopeTableCount"], 1)
@@ -1830,7 +1840,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
 
     async def test_restricted_scope_hides_sessions_runs_schedules_and_global_logs(self):
         credential = await self._issue_restricted("viewer")
-        headers = {"X-DBAgent-Token": credential["token"]}
+        headers = {"X-DBQuill-Token": credential["token"]}
         desktop_bridge._DB_SESSIONS.update({
             "allowed-session": {
                 "id": "allowed-session", "dbId": self.role_db_id,
@@ -1893,7 +1903,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
 
     async def test_restricted_admin_cannot_escalate_to_global_credentials_or_backups(self):
         credential = await self._issue_restricted("admin")
-        headers = {"X-DBAgent-Token": credential["token"]}
+        headers = {"X-DBQuill-Token": credential["token"]}
         context = await self.client.get("/db/auth/context", headers=headers)
         capabilities = (await context.json())["access"]["capabilities"]
         self.assertFalse(capabilities["manage_credentials"])
@@ -1913,7 +1923,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
 
     async def test_restricted_audit_requires_and_filters_authorized_database(self):
         credential = await self._issue_restricted("viewer")
-        headers = {"X-DBAgent-Token": credential["token"]}
+        headers = {"X-DBQuill-Token": credential["token"]}
         db_audit_store.append_event(
             category="system", action="allowed_event", outcome="succeeded",
             summary="allowed", risk="low", actor="system",
@@ -1968,7 +1978,7 @@ class SessionHandlerTests(AioHTTPTestCase):
         }
         response = await self.client.delete(
             "/db/session/memory-session",
-            headers={"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN},
+            headers={"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN},
         )
         self.assertEqual(response.status, 200)
         self.assertTrue((await response.json())["ok"])
@@ -2048,7 +2058,7 @@ class DatabaseSafetyTests(unittest.TestCase):
             )
             conn.commit()
 
-        agent = dc.DBAgent(
+        agent = dc.DBQuillAgent(
             db_path=str(path), sample_rows=0, allowed_tables=["items", "links"],
         )
         self.assertEqual(list(agent.schema.tables), ["items", "links"])
@@ -2078,7 +2088,7 @@ class DatabaseSafetyTests(unittest.TestCase):
                 "BEGIN UPDATE secrets SET value = NEW.value WHERE id = 1; END"
             )
             conn.commit()
-        agent = dc.DBAgent(
+        agent = dc.DBQuillAgent(
             db_path=str(path), sample_rows=0, allowed_tables=["items"],
         )
         with self.assertRaises(dc.WriteSecurityError):
@@ -2125,7 +2135,7 @@ class DatabaseSafetyTests(unittest.TestCase):
                 "INSERT INTO records(public, secret) VALUES ('visible', 'hidden')"
             )
             conn.commit()
-        agent = dc.DBAgent(
+        agent = dc.DBQuillAgent(
             db_path=str(path), sample_rows=2, allowed_tables=["records"],
             allowed_columns={"records": ["id", "public"]},
         )
@@ -2211,7 +2221,7 @@ class DatabaseSafetyTests(unittest.TestCase):
             )
             conn.commit()
 
-        agent = dc.DBAgent(
+        agent = dc.DBQuillAgent(
             db_path=str(path), sample_rows=5, allowed_tables=["records"],
             allowed_columns={"records": ["id", "public"]},
             row_filters={"records": [
@@ -2258,7 +2268,7 @@ class DatabaseSafetyTests(unittest.TestCase):
             with self.subTest(sql=sql), self.assertRaises(dc.WriteSecurityError):
                 agent.write_security.validate_write(sql)
 
-        literal_agent = dc.DBAgent(
+        literal_agent = dc.DBQuillAgent(
             db_path=str(path), sample_rows=0, allowed_tables=["records"],
             row_filters={"records": [
                 {"column": "tenant", "operator": "eq", "value": injection_tenant},
@@ -2285,13 +2295,13 @@ class DatabaseSafetyTests(unittest.TestCase):
         )
         dc.WRITE_REGISTRY.register(proposal)
 
-        second_agent = dc.DBAgent(db_path=str(second), sample_rows=0)
+        second_agent = dc.DBQuillAgent(db_path=str(second), sample_rows=0)
         rejected = second_agent.confirm_write(proposal.confirm_id, approve=True)
         self.assertEqual(rejected.kind, "error")
         with closing(sqlite3.connect(second)) as conn:
             self.assertEqual(conn.execute("SELECT value FROM items WHERE id=1").fetchone()[0], "v0")
 
-        first_agent = dc.DBAgent(db_path=str(first), sample_rows=0)
+        first_agent = dc.DBQuillAgent(db_path=str(first), sample_rows=0)
         accepted = first_agent.confirm_write(proposal.confirm_id, approve=True)
         self.assertEqual(accepted.kind, "write_result")
         with closing(sqlite3.connect(first)) as conn:
@@ -2348,9 +2358,9 @@ class DatabaseSafetyTests(unittest.TestCase):
                     sql="UPDATE items SET value='x' WHERE id=1",
                 )
 
-        fake_module = types.ModuleType("dbagent_core")
-        fake_module.DBAgent = FakeAgent
-        with mock.patch.dict(sys.modules, {"dbagent_core": fake_module}):
+        fake_module = types.ModuleType("dbquill_core")
+        fake_module.DBQuillAgent = FakeAgent
+        with mock.patch.dict(sys.modules, {"dbquill_core": fake_module}):
             result = db_scheduler._run_nl(str(self.root / "unused.db"), "update it")
 
         self.assertFalse(result["ok"])
@@ -2388,9 +2398,9 @@ class DatabaseSafetyTests(unittest.TestCase):
             def confirm_write(self, confirm_id, approve=True):
                 raise AssertionError("clarification must never be auto-confirmed")
 
-        fake_module = types.ModuleType("dbagent_core")
-        fake_module.DBAgent = FakeAgent
-        with mock.patch.dict(sys.modules, {"dbagent_core": fake_module}):
+        fake_module = types.ModuleType("dbquill_core")
+        fake_module.DBQuillAgent = FakeAgent
+        with mock.patch.dict(sys.modules, {"dbquill_core": fake_module}):
             result = db_scheduler._run_nl(str(self.root / "unused.db"), "删除记录")
 
         self.assertFalse(result["ok"])
@@ -2484,7 +2494,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.path = Path(self.tmp.name) / "operations.db"
         _make_db(self.path, rows=3)
-        self.agent = dc.DBAgent(db_path=str(self.path), sample_rows=0)
+        self.agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -2493,7 +2503,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
         cases = {
             "你好": "我在",
             "谢谢": "不客气",
-            "你是谁": "DB-Agent",
+            "你是谁": "DBQuill",
             "你能做什么": "查看数据库",
             "你好吗": "状态正常",
             "陪我聊聊": "当然可以",
@@ -2547,7 +2557,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
         self.assertIn("目标表", answer.narrative)
         self.assertIn("仍然保留", answer.narrative)
 
-    def _dimension_agent(self) -> dc.DBAgent:
+    def _dimension_agent(self) -> dc.DBQuillAgent:
         with closing(sqlite3.connect(self.path)) as conn:
             conn.execute(
                 "CREATE TABLE customers ("
@@ -2563,7 +2573,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
                 ],
             )
             conn.commit()
-        return dc.DBAgent(
+        return dc.DBQuillAgent(
             db_path=str(self.path),
             sample_rows=0,
             semantic_entries=[
@@ -2602,7 +2612,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
             ],
         )
 
-    def _trend_agent(self) -> dc.DBAgent:
+    def _trend_agent(self) -> dc.DBQuillAgent:
         with closing(sqlite3.connect(self.path)) as conn:
             conn.execute(
                 "CREATE TABLE orders ("
@@ -2618,7 +2628,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
                 ],
             )
             conn.commit()
-        return dc.DBAgent(
+        return dc.DBQuillAgent(
             db_path=str(self.path),
             sample_rows=0,
             semantic_entries=[
@@ -2661,7 +2671,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
             ],
         )
 
-    def _multi_metric_agent(self) -> dc.DBAgent:
+    def _multi_metric_agent(self) -> dc.DBQuillAgent:
         with closing(sqlite3.connect(self.path)) as conn:
             conn.execute(
                 "CREATE TABLE orders ("
@@ -2677,7 +2687,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
                 ],
             )
             conn.commit()
-        return dc.DBAgent(
+        return dc.DBQuillAgent(
             db_path=str(self.path),
             sample_rows=0,
             semantic_entries=[
@@ -2897,7 +2907,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
         self.assertEqual(answer.steps[0]["source"], "model")
 
     def test_guided_insert_keeps_safe_form_fallback_when_model_is_unavailable(self):
-        with mock.patch.object(dc, "_llm_ask_json", side_effect=dc.DBAgentError("offline")) as classify:
+        with mock.patch.object(dc, "_llm_ask_json", side_effect=dc.DBQuillError("offline")) as classify:
             answer = self.agent.ask("我想往库里加点东西")
         classify.assert_called_once()
         self.assertEqual(answer.kind, "write_form")
@@ -2955,7 +2965,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
                 "city TEXT DEFAULT 'unknown', note TEXT)"
             )
             conn.commit()
-        agent = dc.DBAgent(db_path=str(self.path), sample_rows=0)
+        agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0)
         rejected = agent.prepare_structured_insert("contacts", [
             {"column": "name", "mode": "omit"},
         ])
@@ -3030,7 +3040,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
                 self.assertIn(expected, answer.error)
 
     def test_table_scoped_agent_cannot_prepare_structured_ddl(self):
-        agent = dc.DBAgent(
+        agent = dc.DBQuillAgent(
             db_path=str(self.path), sample_rows=0,
             allowed_tables=["items"], allowed_columns={"items": ["id", "value"]},
         )
@@ -3041,7 +3051,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
         self.assertIn("不允许创建", answer.error)
 
     def test_row_scoped_credential_cannot_open_structured_write_form(self):
-        agent = dc.DBAgent(
+        agent = dc.DBQuillAgent(
             db_path=str(self.path),
             sample_rows=0,
             allowed_tables=["items"],
@@ -3199,7 +3209,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
 
     def test_multi_table_generic_count_asks_for_target(self):
         _add_table(self.path)
-        agent = dc.DBAgent(db_path=str(self.path), sample_rows=0)
+        agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0)
         with mock.patch.object(dc, "_llm_ask_json", side_effect=AssertionError("LLM should not run")):
             answer = agent.ask("一共多少条记录？")
         self.assertEqual(answer.kind, "clarification")
@@ -3211,7 +3221,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
 
     def test_disconnected_cross_table_query_asks_for_relationship(self):
         _add_table(self.path)
-        agent = dc.DBAgent(db_path=str(self.path), sample_rows=0)
+        agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0)
         with mock.patch.object(dc, "_llm_ask_json", side_effect=AssertionError("LLM should not run")):
             answer = agent.ask("统计 items 和 orders 的数量")
         self.assertEqual(answer.kind, "clarification")
@@ -3220,7 +3230,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
 
     def test_explicit_cross_table_relationship_allows_query(self):
         _add_table(self.path)
-        agent = dc.DBAgent(db_path=str(self.path), sample_rows=0)
+        agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0)
         generated = dc.DBAnswer(
             kind="query", narrative="查询完成", sql="SELECT COUNT(*) FROM items",
             columns=["数量"], rows=[[3]],
@@ -3238,7 +3248,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
 
     def test_aggregate_without_numeric_field_requires_clarification(self):
         _add_table(self.path)
-        agent = dc.DBAgent(db_path=str(self.path), sample_rows=0)
+        agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0)
         with mock.patch.object(dc, "_llm_ask_json", side_effect=AssertionError("LLM should not run")):
             answer = agent.ask("计算 orders 的平均值")
         self.assertEqual(answer.kind, "clarification")
@@ -3247,7 +3257,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
 
     def test_explicit_aggregate_field_allows_query(self):
         _add_table(self.path)
-        agent = dc.DBAgent(db_path=str(self.path), sample_rows=0)
+        agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0)
         generated = dc.DBAnswer(
             kind="query", narrative="平均值为 12.5", sql="SELECT AVG(amount) FROM orders",
             columns=["平均值"], rows=[[12.5]],
@@ -3263,7 +3273,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
             conn.execute("ALTER TABLE orders ADD COLUMN created_at TEXT")
             conn.execute("ALTER TABLE orders ADD COLUMN updated_at TEXT")
             conn.commit()
-        agent = dc.DBAgent(db_path=str(self.path), sample_rows=0)
+        agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0)
         with mock.patch.object(dc, "_llm_ask_json", side_effect=AssertionError("LLM should not run")):
             first = agent.ask("统计 orders 最近的趋势")
         self.assertEqual(first.clarification["missing"], "time_field")
@@ -3309,7 +3319,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
         with closing(sqlite3.connect(self.path)) as conn:
             conn.execute("ALTER TABLE orders ADD COLUMN created_at TEXT")
             conn.commit()
-        agent = dc.DBAgent(
+        agent = dc.DBQuillAgent(
             db_path=str(self.path), sample_rows=0,
             semantic_entries=[{
                 "kind": "time_field", "term": "下单时间", "table": "orders",
@@ -3331,7 +3341,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
         with closing(sqlite3.connect(self.path)) as conn:
             conn.execute("ALTER TABLE orders ADD COLUMN created_at TEXT")
             conn.commit()
-        agent = dc.DBAgent(db_path=str(self.path), sample_rows=0)
+        agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0)
         with mock.patch.object(agent.nl2sql, "answer", side_effect=AssertionError("NL2SQL should not run")):
             answer = agent.ask("统计 orders.created_at 最近 30 天的趋势")
         self.assertEqual(answer.kind, "clarification")
@@ -3346,7 +3356,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
         with closing(sqlite3.connect(self.path)) as conn:
             conn.execute("ALTER TABLE orders ADD COLUMN created_at TEXT")
             conn.commit()
-        agent = dc.DBAgent(db_path=str(self.path), sample_rows=0)
+        agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0)
         generated = dc.DBAnswer(
             kind="query", narrative="按周趋势完成", sql="SELECT created_at FROM orders",
             columns=["时间"], rows=[],
@@ -3374,7 +3384,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
                 "storage_basis": "declared_date", "week_start": 1, "weekend_days": [6, 7],
             },
         }]
-        agent = dc.DBAgent(db_path=str(self.path), sample_rows=0, semantic_entries=entries)
+        agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0, semantic_entries=entries)
         # created_at 为 TEXT，确定性通道要求 DATE 声明；直接验证编译器对“无从”范围的识别
         plan = agent.calendar_query.compiler.compile(
             "统计 2026-08-10 到 2026-08-18 工作日内的已支付订单数",
@@ -3395,10 +3405,10 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
         with closing(sqlite3.connect(self.path)) as conn:
             conn.execute("ALTER TABLE items ADD COLUMN city TEXT")
             conn.commit()
-        agent = dc.DBAgent(db_path=str(self.path), sample_rows=0)
+        agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0)
 
         # LLM 不可用 → 不崩溃，回退澄清（fail-closed）
-        with mock.patch.object(dc, "_llm_ask_json", side_effect=dc.DBAgentError("down")):
+        with mock.patch.object(dc, "_llm_ask_json", side_effect=dc.DBQuillError("down")):
             answer = agent.ask("新增一位客户：姓名“测试”，城市“厦门”")
         self.assertEqual(answer.kind, "clarification")
 
@@ -3676,7 +3686,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
                 ],
             )
             conn.commit()
-        agent = dc.DBAgent(
+        agent = dc.DBQuillAgent(
             db_path=str(self.path), sample_rows=0,
             semantic_entries=[
                 {
@@ -3722,7 +3732,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
                 ],
             )
             conn.commit()
-        agent = dc.DBAgent(
+        agent = dc.DBQuillAgent(
             db_path=str(self.path), sample_rows=0,
             semantic_entries=[
                 {
@@ -3754,7 +3764,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
         self.assertEqual(answer.trend_plan["rules"]["timezone_conversion"], "iana_tzdata")
         self.assertEqual(answer.trend_plan["rules"]["tzdata_version"], "2026.3")
         self.assertEqual(answer.trend_plan["rules"]["iana_version"], "2026c")
-        self.assertIn("dbagent_iana_date", answer.sql)
+        self.assertIn("dbquill_iana_date", answer.sql)
         self.assertIn(dc.TimezoneRuntime.VERSION_TOKEN, answer.sql)
 
     def test_trend_timestamp_without_storage_basis_falls_back(self):
@@ -3763,7 +3773,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
                 "CREATE TABLE events (id INTEGER PRIMARY KEY, occurred_at TIMESTAMP)"
             )
             conn.commit()
-        agent = dc.DBAgent(
+        agent = dc.DBQuillAgent(
             db_path=str(self.path), sample_rows=0,
             semantic_entries=[{
                 "kind": "time_field", "term": "发生时间", "table": "events",
@@ -3966,7 +3976,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
         with closing(sqlite3.connect(self.path)) as conn:
             conn.execute("ALTER TABLE orders ADD COLUMN created_at TEXT")
             conn.commit()
-        agent = dc.DBAgent(db_path=str(self.path), sample_rows=0)
+        agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0)
         with mock.patch.object(dc, "_llm_ask_json", side_effect=AssertionError("LLM should not run")):
             answer = agent.ask("统计 orders.created_at 2026 财年的订单数量")
         self.assertEqual(answer.kind, "clarification")
@@ -4008,7 +4018,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
                 "working_override_column": "is_working",
             },
         }
-        agent = dc.DBAgent(
+        agent = dc.DBQuillAgent(
             db_path=str(self.path), sample_rows=0, semantic_entries=[calendar_entry],
         )
         generated = dc.DBAnswer(
@@ -4056,7 +4066,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
                 },
             },
         ]
-        agent = dc.DBAgent(db_path=str(self.path), sample_rows=0, semantic_entries=entries)
+        agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0, semantic_entries=entries)
         with mock.patch.object(dc, "_llm_ask_json", side_effect=AssertionError("LLM should not run")), \
              mock.patch.object(agent.nl2sql, "answer", side_effect=AssertionError("NL2SQL should not run")):
             answer = agent.ask("统计 orders.created_at 2026 财年的成交额")
@@ -4112,7 +4122,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
                 "working_override_column": "is_working",
             },
         }
-        agent = dc.DBAgent(
+        agent = dc.DBQuillAgent(
             db_path=str(self.path), sample_rows=0, semantic_entries=[calendar_entry],
         )
         with mock.patch.object(dc, "_llm_ask_json", side_effect=AssertionError("LLM should not run")), \
@@ -4155,7 +4165,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
                 "week_start": 1, "weekend_days": [],
             },
         }
-        agent = dc.DBAgent(
+        agent = dc.DBQuillAgent(
             db_path=str(self.path), sample_rows=0, semantic_entries=[calendar_entry],
         )
         with mock.patch.object(dc, "_llm_ask_json", side_effect=AssertionError("LLM should not run")), \
@@ -4181,7 +4191,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
                 (10, "2024-07-01T04:30:00Z"),
             )
             conn.commit()
-        agent = dc.DBAgent(
+        agent = dc.DBQuillAgent(
             db_path=str(self.path), sample_rows=0,
             semantic_entries=[{
                 "kind": "business_calendar", "term": "美东业务日历", "table": "orders",
@@ -4205,7 +4215,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
         self.assertEqual(answer.calendar_plan["rules"]["timezone_conversion"], "iana_tzdata")
         self.assertEqual(answer.calendar_plan["rules"]["iana_version"], "2026c")
         self.assertIsNone(answer.calendar_plan["rules"]["business_utc_offset_minutes"])
-        self.assertIn("dbagent_iana_date", answer.sql)
+        self.assertIn("dbquill_iana_date", answer.sql)
 
     def test_local_timestamp_calendar_uses_recorded_wall_date_without_conversion(self):
         _add_table(self.path)
@@ -4226,7 +4236,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
                 "storage_basis": "local_datetime", "week_start": 1, "weekend_days": [],
             },
         }
-        agent = dc.DBAgent(
+        agent = dc.DBQuillAgent(
             db_path=str(self.path), sample_rows=0, semantic_entries=[calendar_entry],
         )
         with mock.patch.object(agent.nl2sql, "answer", side_effect=AssertionError("NL2SQL should not run")):
@@ -4253,7 +4263,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
                 "week_start": 1, "weekend_days": [],
             },
         }
-        agent = dc.DBAgent(
+        agent = dc.DBQuillAgent(
             db_path=str(self.path), sample_rows=0, semantic_entries=[calendar_entry],
         )
         generated = dc.DBAnswer(
@@ -4295,7 +4305,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
                 },
             },
         ]
-        agent = dc.DBAgent(db_path=str(self.path), sample_rows=0, semantic_entries=entries)
+        agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0, semantic_entries=entries)
         with mock.patch.object(agent.nl2sql, "answer", side_effect=AssertionError("NL2SQL should not run")):
             answer = agent.ask("统计 orders.created_at 2026 财年第2季度的成交额")
 
@@ -4325,7 +4335,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
                 },
             },
         ]
-        agent = dc.DBAgent(db_path=str(self.path), sample_rows=0, semantic_entries=entries)
+        agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0, semantic_entries=entries)
         generated = dc.DBAnswer(
             kind="query", narrative="模型链路", sql="SELECT amount FROM orders",
             columns=["amount"], rows=[],
@@ -4357,7 +4367,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
                 },
             },
         ]
-        agent = dc.DBAgent(db_path=str(self.path), sample_rows=0, semantic_entries=entries)
+        agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0, semantic_entries=entries)
         generated = dc.DBAnswer(
             kind="query", narrative="旧配置回退", sql="SELECT SUM(amount) FROM orders",
             columns=["成交额"], rows=[[12.5]],
@@ -4504,7 +4514,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
 
     def test_independent_multi_query_runs_through_natural_language_entry(self):
         _add_table(self.path, "orders")
-        agent = dc.DBAgent(db_path=str(self.path), sample_rows=0)
+        agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0)
 
         def query_answer(question, history=None, allowed_tables=None):
             table = allowed_tables[0]
@@ -4534,7 +4544,7 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
     def test_three_independent_queries_run_through_natural_language_entry(self):
         _add_table(self.path, "orders")
         _add_table(self.path, "events")
-        agent = dc.DBAgent(db_path=str(self.path), sample_rows=0)
+        agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0)
 
         def query_answer(question, history=None, allowed_tables=None):
             table = allowed_tables[0]
@@ -4602,7 +4612,7 @@ class FourLayerProbeFixTests(unittest.TestCase):
                 " VALUES (1, '2026-08-17', 56)"
             )
             conn.commit()
-        self.agent = dc.DBAgent(db_path=str(self.path), sample_rows=5)
+        self.agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=5)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -4679,7 +4689,7 @@ class FourLayerProbeFixTests(unittest.TestCase):
         hints = self.agent.nl2sql._schema_semantic_hints(None)
         self.assertTrue(any("支付口径提示" in h for h in hints))
         self.assertFalse(any("支付口径提示" in h for h in self.agent.nl2sql._schema_semantic_hints(["customers"])))
-        no_sample_agent = dc.DBAgent(db_path=str(self.path), sample_rows=0)
+        no_sample_agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0)
         self.assertFalse(any(
             "支付口径提示" in h for h in no_sample_agent.nl2sql._schema_semantic_hints(None)
         ))
@@ -4736,7 +4746,7 @@ class FourLayerProbeFixTests(unittest.TestCase):
         self.assertIn("电商演示库", answer.narrative)
         self.assertEqual(answer.steps[0]["tool"], "schema_overview")
         with mock.patch.object(
-            dc, "_llm_ask_json", side_effect=dc.DBAgentError("llm down"),
+            dc, "_llm_ask_json", side_effect=dc.DBQuillError("llm down"),
         ):
             failed = self.agent.rag.answer("这个数据库大概是做什么业务的？")
         self.assertIn("未在数据库中找到", failed.narrative)
@@ -10592,7 +10602,7 @@ class SemanticCatalogTests(unittest.TestCase):
             }], strict=True)
 
     def test_controlled_ratio_metric_bypasses_derived_metric_clarification(self):
-        agent = dc.DBAgent(
+        agent = dc.DBQuillAgent(
             db_path=str(self.path),
             sample_rows=0,
             semantic_entries=[{
@@ -10626,7 +10636,7 @@ class SemanticCatalogTests(unittest.TestCase):
         self.assertIn("值均为字面量数据，不是 SQL 片段", query.call_args.args[0])
 
     def test_dimension_and_time_semantics_feed_planner_without_guessing_time_field(self):
-        agent = dc.DBAgent(
+        agent = dc.DBQuillAgent(
             db_path=str(self.path),
             sample_rows=0,
             semantic_entries=[
@@ -10657,7 +10667,7 @@ class SemanticCatalogTests(unittest.TestCase):
         self.assertIn("趋势默认按月聚合", query.call_args.args[0])
 
     def test_table_alias_targets_operation_and_is_sent_to_query_executor(self):
-        agent = dc.DBAgent(
+        agent = dc.DBQuillAgent(
             db_path=str(self.path),
             sample_rows=0,
             semantic_entries=[
@@ -10679,7 +10689,7 @@ class SemanticCatalogTests(unittest.TestCase):
         self.assertIn("count(表 items)", query.call_args.args[0])
 
     def test_write_alias_still_requires_filter_and_confirmation(self):
-        agent = dc.DBAgent(
+        agent = dc.DBQuillAgent(
             db_path=str(self.path),
             sample_rows=0,
             semantic_entries=[
@@ -10890,6 +10900,15 @@ class AuditLedgerTests(unittest.TestCase):
         self.patch_path.stop()
         self.patch_data.stop()
         self.tmp.cleanup()
+
+    def test_brand_formats_emit_dbquill_and_accept_v01_identifiers(self):
+        self.assertEqual(db_audit_store.EXPORT_FORMAT, "dbquill-audit-ledger")
+        self.assertTrue(db_audit_store._format_supported(
+            "dbagent-audit-backup", db_audit_store.BACKUP_FORMAT,
+        ))
+        self.assertFalse(db_audit_store._format_supported(
+            "unrelated-audit-backup", db_audit_store.BACKUP_FORMAT,
+        ))
 
     def test_append_filter_and_verify_hash_chain(self):
         first = db_audit_store.append_event(
@@ -11438,7 +11457,7 @@ class AuditLedgerTests(unittest.TestCase):
             self.assertEqual(after["assessment_token"], assessment["assessment_token"])
             self.assertFalse(after["integrity_ok"])
             self.assertTrue(any(Path(evidence_dir).glob(
-                "dbagent-audit-corrupt-evidence-*.zip"
+                "dbquill-audit-corrupt-evidence-*.zip"
             )))
 
     def test_configured_external_target_probes_syncs_verifies_and_never_deletes(self):
@@ -11482,7 +11501,7 @@ class AuditLedgerTests(unittest.TestCase):
             self.assertTrue(probe["write_read"])
             self.assertTrue(probe["atomic_replace"])
             self.assertTrue(probe["temporary_cleanup"])
-            self.assertFalse(list(Path(target_dir).glob(".dbagent-audit-probe-*")))
+            self.assertFalse(list(Path(target_dir).glob(".dbquill-audit-probe-*")))
 
             db_audit_store.append_event(
                 category="system", action="target_first", outcome="succeeded",
@@ -11517,7 +11536,7 @@ class AuditLedgerTests(unittest.TestCase):
             )
             self.assertTrue(first_path.is_file())
             self.assertEqual(
-                len(list(Path(target_dir).glob("dbagent-audit-external-backup-*.zip"))),
+                len(list(Path(target_dir).glob("dbquill-audit-external-backup-*.zip"))),
                 2,
             )
             self.assertEqual(
@@ -11582,7 +11601,7 @@ class AuditLedgerTests(unittest.TestCase):
                     )
             self.assertEqual(state_path.read_bytes(), original_state)
             self.assertEqual(
-                len(list(Path(target_dir).glob("dbagent-audit-external-backup-*.zip"))),
+                len(list(Path(target_dir).glob("dbquill-audit-external-backup-*.zip"))),
                 1,
             )
             self.assertTrue(db_audit_store.verify_latest_external_target_backup()["valid"])
@@ -11846,7 +11865,7 @@ class AuditApiTests(AioHTTPTestCase):
                 "question_length": 4,
             },
         )
-        headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
         response = await self.client.get(
             f"/db/audit?dbId={self.db_id}&limit=20", headers=headers,
         )
@@ -11861,14 +11880,14 @@ class AuditApiTests(AioHTTPTestCase):
             f"/db/audit/export?dbId={self.db_id}", headers=headers,
         )
         self.assertEqual(exported.status, 200)
-        self.assertEqual((await exported.json())["ledger"]["format"], "dbagent-audit-ledger")
+        self.assertEqual((await exported.json())["ledger"]["format"], "dbquill-audit-ledger")
 
     async def test_structured_insert_api_requires_operator_and_waits_for_confirmation(self):
         viewer_headers = {
-            "X-DBAgent-Token": desktop_bridge._ROLE_TOKENS["viewer"],
+            "X-DBQuill-Token": desktop_bridge._ROLE_TOKENS["viewer"],
         }
         operator_headers = {
-            "X-DBAgent-Token": desktop_bridge._ROLE_TOKENS["operator"],
+            "X-DBQuill-Token": desktop_bridge._ROLE_TOKENS["operator"],
         }
         form = await self.client.get(
             f"/db/write/form?dbId={self.db_id}&table=items",
@@ -11921,9 +11940,9 @@ class AuditApiTests(AioHTTPTestCase):
 
     async def test_structured_create_table_api_requires_admin_and_refreshes_schema(self):
         operator_headers = {
-            "X-DBAgent-Token": desktop_bridge._ROLE_TOKENS["operator"],
+            "X-DBQuill-Token": desktop_bridge._ROLE_TOKENS["operator"],
         }
-        admin_headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        admin_headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
         body = {
             "dbId": self.db_id,
             "table": "api_orders",
@@ -11997,20 +12016,20 @@ class AuditApiTests(AioHTTPTestCase):
         }
         operator = await self.client.post(
             "/db/audit/reconciliation/resolve",
-            headers={"X-DBAgent-Token": desktop_bridge._ROLE_TOKENS["operator"]},
+            headers={"X-DBQuill-Token": desktop_bridge._ROLE_TOKENS["operator"]},
             json=body,
         )
         self.assertEqual(operator.status, 403)
         missing_evidence = await self.client.post(
             "/db/audit/reconciliation/resolve",
-            headers={"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN},
+            headers={"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN},
             json={**body, "evidenceRef": ""},
         )
         self.assertEqual(missing_evidence.status, 400)
 
         resolved = await self.client.post(
             "/db/audit/reconciliation/resolve",
-            headers={"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN},
+            headers={"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN},
             json=body,
         )
         self.assertEqual(resolved.status, 200, await resolved.text())
@@ -12023,14 +12042,14 @@ class AuditApiTests(AioHTTPTestCase):
         )
         duplicate = await self.client.post(
             "/db/audit/reconciliation/resolve",
-            headers={"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN},
+            headers={"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN},
             json=body,
         )
         self.assertEqual(duplicate.status, 404)
         self.assertNotIn(b"ticket-456", db_audit_store._DB_PATH.read_bytes())
 
     async def test_write_confirmation_fails_closed_when_audit_is_unavailable(self):
-        headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
         with mock.patch.object(desktop_bridge, "_audit_store", None), \
              mock.patch.object(desktop_bridge, "_db_get_agent") as get_agent:
             response = await self.client.post(
@@ -12041,7 +12060,7 @@ class AuditApiTests(AioHTTPTestCase):
         get_agent.assert_not_called()
 
     async def test_audit_backup_api_creates_verified_backup_and_reports_status(self):
-        headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
         response = await self.client.post(
             "/db/audit/backups", headers=headers, json={"dbId": self.db_id},
         )
@@ -12074,7 +12093,7 @@ class AuditApiTests(AioHTTPTestCase):
         with closing(sqlite3.connect(db_audit_store._DB_PATH)) as conn:
             conn.execute("UPDATE audit_events SET summary = ? WHERE sequence = 1", ("被修改",))
             conn.commit()
-        headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
         with mock.patch.object(desktop_bridge, "_db_get_agent") as get_agent:
             response = await self.client.post(
                 "/db/write/confirm", headers=headers,
@@ -12096,8 +12115,8 @@ class AuditApiTests(AioHTTPTestCase):
             preview={"affected": 1},
             db_path=str(self.db_path.resolve()),
         ))
-        agent = dc.DBAgent(db_path=str(self.db_path), sample_rows=0)
-        headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        agent = dc.DBQuillAgent(db_path=str(self.db_path), sample_rows=0)
+        headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
         with mock.patch.object(desktop_bridge, "_db_get_agent", return_value=agent):
             response = await self.client.post(
                 "/db/write/confirm", headers=headers,
@@ -12128,8 +12147,8 @@ class AuditApiTests(AioHTTPTestCase):
             preview={"affected": 1},
             db_path=str(self.db_path.resolve()),
         ))
-        agent = dc.DBAgent(db_path=str(self.db_path), sample_rows=0)
-        headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        agent = dc.DBQuillAgent(db_path=str(self.db_path), sample_rows=0)
+        headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
         with mock.patch.object(desktop_bridge, "_db_get_agent", return_value=agent):
             response = await self.client.post(
                 "/db/write/confirm", headers=headers,
@@ -12164,8 +12183,8 @@ class AuditApiTests(AioHTTPTestCase):
             dangerous=False, preview={"affected": 1},
             db_path=str(self.db_path.resolve()),
         ))
-        agent = dc.DBAgent(db_path=str(self.db_path), sample_rows=0)
-        headers = {"X-DBAgent-Token": desktop_bridge._ROLE_TOKENS["operator"]}
+        agent = dc.DBQuillAgent(db_path=str(self.db_path), sample_rows=0)
+        headers = {"X-DBQuill-Token": desktop_bridge._ROLE_TOKENS["operator"]}
         with mock.patch.object(desktop_bridge, "_db_get_agent", return_value=agent):
             response = await self.client.post(
                 "/db/write/confirm", headers=headers,
@@ -12189,7 +12208,7 @@ class AuditApiTests(AioHTTPTestCase):
             dangerous=False, preview={"affected": 1},
             db_path=str(self.db_path.resolve()),
         ))
-        operator_headers = {"X-DBAgent-Token": desktop_bridge._ROLE_TOKENS["operator"]}
+        operator_headers = {"X-DBQuill-Token": desktop_bridge._ROLE_TOKENS["operator"]}
         denied = await self.client.post(
             "/db/write/confirm", headers=operator_headers,
             json={"dbId": self.db_id, "confirmId": confirm_id, "approved": True},
@@ -12202,8 +12221,8 @@ class AuditApiTests(AioHTTPTestCase):
         with closing(sqlite3.connect(self.db_path)) as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM items").fetchone()[0], 1)
 
-        agent = dc.DBAgent(db_path=str(self.db_path), sample_rows=0)
-        admin_headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        agent = dc.DBQuillAgent(db_path=str(self.db_path), sample_rows=0)
+        admin_headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
         with mock.patch.object(desktop_bridge, "_db_get_agent", return_value=agent):
             approved = await self.client.post(
                 "/db/write/confirm", headers=admin_headers,
@@ -12273,7 +12292,7 @@ class ScheduleAuditApiTests(AioHTTPTestCase):
         await super().asyncTearDown()
 
     async def test_read_only_schedule_mutation_and_run_are_fully_reconciled(self):
-        headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
         raw_sql = "SELECT value FROM items WHERE id=1"
         created = await self.client.post(
             "/db/schedules", headers=headers,
@@ -12308,7 +12327,7 @@ class ScheduleAuditApiTests(AioHTTPTestCase):
         self.assertNotIn(raw_sql, json.dumps(events, ensure_ascii=False))
 
     async def test_schedule_write_is_rejected_and_audit_unavailable_fails_closed(self):
-        headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
         write_sql = "UPDATE items SET value='forbidden' WHERE id=1"
         rejected = await self.client.post(
             "/db/schedules", headers=headers,
@@ -12394,7 +12413,7 @@ class NaturalLanguageApiTests(AioHTTPTestCase):
         credential = db_identity_store.issue_credential(
             label="只读分析员", role="viewer", ttl_hours=24,
         )
-        headers = {"X-DBAgent-Token": credential["token"]}
+        headers = {"X-DBQuill-Token": credential["token"]}
         response = await self.client.post(
             "/db/ask",
             headers=headers,
@@ -12425,7 +12444,7 @@ class NaturalLanguageApiTests(AioHTTPTestCase):
         self.assertNotIn("有哪些表", json.dumps(events[0], ensure_ascii=False))
 
     async def test_short_clarification_reply_uses_structured_session_state(self):
-        headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
 
         async def ask_and_wait(question: str, session_id: str = "") -> dict:
             response = await self.client.post(
@@ -12464,7 +12483,7 @@ class NaturalLanguageApiTests(AioHTTPTestCase):
         self.assertIn("目标表：items", second["result"]["clarification"]["original_question"])
 
     async def test_basic_conversation_preserves_pending_database_clarification(self):
-        headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
 
         async def ask_and_wait(question: str, session_id: str = "") -> dict:
             response = await self.client.post(
@@ -12519,7 +12538,7 @@ class NaturalLanguageApiTests(AioHTTPTestCase):
             conn.execute("ALTER TABLE items ADD COLUMN created_at TEXT")
             conn.execute("ALTER TABLE items ADD COLUMN updated_at TEXT")
             conn.commit()
-        headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
 
         async def ask_and_wait(question: str, session_id: str = "") -> dict:
             response = await self.client.post(
@@ -12634,7 +12653,7 @@ class SemanticApiTests(AioHTTPTestCase):
         await super().asyncTearDown()
 
     async def test_semantic_crud_validates_schema_and_invalidates_agent_cache(self):
-        headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
         desktop_bridge._DB_AGENT_CACHE[self.db_id] = object()
         response = await self.client.post(
             "/db/semantics",
@@ -12852,7 +12871,7 @@ class SemanticApiTests(AioHTTPTestCase):
         self.assertEqual(deleted.status, 200)
 
     async def test_column_scope_hides_and_cannot_overwrite_hidden_semantics(self):
-        admin_headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        admin_headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
         hidden_response = await self.client.post(
             "/db/semantics", headers=admin_headers,
             json={
@@ -12876,7 +12895,7 @@ class SemanticApiTests(AioHTTPTestCase):
                 "columnScopes": {database_ref: {"items": ["id", "value"]}},
             },
         }
-        scoped_headers = {"X-DBAgent-Token": "field-scoped-test-token"}
+        scoped_headers = {"X-DBQuill-Token": "field-scoped-test-token"}
         with mock.patch.object(
             desktop_bridge, "_principal_for_token", return_value=principal,
         ):
@@ -12922,7 +12941,7 @@ class SemanticApiTests(AioHTTPTestCase):
         self.assertEqual(stored[0]["column"], "amount")
 
     async def test_versioned_export_and_two_phase_import_detect_catalog_drift(self):
-        headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
         created = await self.client.post(
             "/db/semantics", headers=headers,
             json={
@@ -12940,7 +12959,7 @@ class SemanticApiTests(AioHTTPTestCase):
         )
         self.assertEqual(exported_response.status, 200)
         catalog = (await exported_response.json())["catalog"]
-        self.assertEqual(catalog["format"], "dbagent-semantic-catalog")
+        self.assertEqual(catalog["format"], "dbquill-semantic-catalog")
         self.assertEqual(catalog["schema_version"], 8)
         self.assertEqual(catalog["semantic_version"], "2.8")
         self.assertNotIn("path", catalog["source"])
@@ -13006,7 +13025,7 @@ class SemanticApiTests(AioHTTPTestCase):
         self.assertEqual(by_term["商品"]["description"], "导入覆盖")
 
     async def test_import_preflight_rejects_duplicate_terms_schema_conflicts_and_size(self):
-        headers = {"X-DBAgent-Token": desktop_bridge.BRIDGE_TOKEN}
+        headers = {"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN}
 
         def catalog(entries, version=1):
             return {
@@ -13167,7 +13186,7 @@ class ModelSettingsUiTests(AioHTTPTestCase):
         return app
 
     def _headers(self, token=None):
-        return {"X-DBAgent-Token": token or desktop_bridge.BRIDGE_TOKEN}
+        return {"X-DBQuill-Token": token or desktop_bridge.BRIDGE_TOKEN}
 
     async def test_admin_test_connection_success_and_model_presence(self):
         fake = mock.MagicMock(status_code=200)
@@ -13270,7 +13289,7 @@ class ModelSettingsUiTests(AioHTTPTestCase):
         self.assertNotIn('brand-mark', html)
         self.assertNotIn('brand-sub', html)
         self.assertNotIn('<span>01</span>', html)
-        self.assertIn('class="brand-wordmark">DB AGENT', html)
+        self.assertIn('class="brand-wordmark">DBQUILL', html)
         # 2026-08-20 视图英文艺术标题块整体移除，全站纸墨风
         self.assertNotIn('class="view-heading"', html)
         self.assertNotIn("Visual<br>", html)
@@ -13316,7 +13335,7 @@ class NaturalFlowFixTests(unittest.TestCase):
                 [(1, "张三", "上海", "华东", "gold", "2026-08-01", 1)],
             )
             conn.commit()
-        self.agent = dc.DBAgent(db_path=str(self.path), sample_rows=5)
+        self.agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=5)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -13538,7 +13557,7 @@ class GroupedMetricsAndCancellationRegressionTests(unittest.TestCase):
         self.assertEqual(answer.rows, [["east", 2, 175.0], ["west", 1, 50.0]])
 
     def test_original_executable_multi_statement_is_rejected_before_model(self):
-        agent = dc.DBAgent(db_path=str(self.path))
+        agent = dc.DBQuillAgent(db_path=str(self.path))
         with mock.patch.object(
             agent.router,
             "classify",
@@ -13635,6 +13654,97 @@ class GroupedMetricsAndCancellationRegressionTests(unittest.TestCase):
                 )
                 self.assertEqual((fk.fk_table, fk.fk_column), ("customers", "id"))
 
+    def test_remote_write_requires_explicit_connection_opt_in(self):
+        connector = dc.RemoteDBConnector({
+            "dialect": "mysql", "host": "127.0.0.1", "database": "fixture",
+        })
+        self.assertFalse(connector.write_enabled)
+        with self.assertRaisesRegex(dc.WriteSecurityError, "未启用受控写入"):
+            connector.connect_rw()
+
+        enabled = dc.RemoteDBConnector({
+            "dialect": "postgresql", "host": "127.0.0.1", "database": "fixture",
+            "write_enabled": True,
+        })
+        self.assertTrue(enabled.write_enabled)
+
+    def test_remote_dml_preview_rolls_back_and_confirmation_commits(self):
+        for dialect in ("mysql", "postgresql"):
+            with self.subTest(dialect=dialect):
+                path = Path(self.tmp.name) / f"remote-{dialect}.db"
+                with closing(sqlite3.connect(path)) as conn:
+                    conn.executescript(
+                        "CREATE TABLE items(id INTEGER PRIMARY KEY, value TEXT NOT NULL);"
+                        "INSERT INTO items(id, value) VALUES (1, 'alpha'), (2, 'beta');"
+                    )
+                    conn.commit()
+
+                connector = dc.RemoteDBConnector({
+                    "dialect": dialect,
+                    "host": "fixture.invalid",
+                    "database": "fixture",
+                    "write_enabled": True,
+                })
+                connector.connect_rw = lambda: sqlite3.connect(path)
+                connector.begin_rw = lambda conn: conn.execute("BEGIN")
+                connector.execute_rw = lambda conn, sql, params=None: conn.execute(sql, params or ())
+                connector.commit_rw = lambda conn: conn.commit()
+                connector.rollback_rw = lambda conn: conn.rollback()
+                connector.close = lambda conn: conn.close()
+                security = dc.WriteSecurity()
+                previewer = dc.WritePreviewer(connector)
+                agent = object.__new__(dc.DBQuillAgent)
+                agent.connector = connector
+                agent.write_security = security
+                agent.write_previewer = previewer
+
+                operations = [
+                    ("UPDATE items SET value = 'gamma' WHERE id = 1", 1),
+                    ("INSERT INTO items(id, value) VALUES (3, 'delta')", 1),
+                    ("DELETE FROM items WHERE id = 2", 1),
+                ]
+                for sql, expected_affected in operations:
+                    pending = dc._prepare_write_proposal(
+                        connector, security, previewer, sql, "远程受控变更",
+                    )
+                    self.assertEqual(pending.kind, "write_pending")
+                    self.assertEqual(pending.write["preview"]["affected"], expected_affected)
+                    with closing(sqlite3.connect(path)) as check:
+                        if sql.startswith("UPDATE"):
+                            self.assertEqual(
+                                check.execute("SELECT value FROM items WHERE id = 1").fetchone()[0],
+                                "alpha",
+                            )
+                        elif sql.startswith("INSERT"):
+                            self.assertIsNone(check.execute("SELECT id FROM items WHERE id = 3").fetchone())
+                        else:
+                            self.assertIsNotNone(check.execute("SELECT id FROM items WHERE id = 2").fetchone())
+                    result = agent.confirm_write(pending.confirm_id, approve=True)
+                    self.assertEqual(result.kind, "write_result")
+                    self.assertEqual(result.operation["status"], "executed")
+
+                with closing(sqlite3.connect(path)) as check:
+                    self.assertEqual(check.execute("SELECT value FROM items WHERE id = 1").fetchone()[0], "gamma")
+                    self.assertEqual(check.execute("SELECT value FROM items WHERE id = 3").fetchone()[0], "delta")
+                    self.assertIsNone(check.execute("SELECT id FROM items WHERE id = 2").fetchone())
+
+    def test_remote_ddl_is_rejected_before_preview_connection(self):
+        connector = dc.RemoteDBConnector({
+            "dialect": "mysql", "host": "fixture.invalid", "database": "fixture",
+            "write_enabled": True,
+        })
+        connector.connect_rw = mock.Mock(side_effect=AssertionError("preview connection must not open"))
+        result = dc._prepare_write_proposal(
+            connector,
+            dc.WriteSecurity(),
+            dc.WritePreviewer(connector),
+            "DROP TABLE items",
+            "删除表",
+        )
+        self.assertEqual(result.kind, "error")
+        self.assertIn("DDL 不支持回滚预览", result.error)
+        connector.connect_rw.assert_not_called()
+
     def test_model_gateway_pre_cancel_does_not_open_http_request(self):
         import model_gateway
 
@@ -13713,8 +13823,8 @@ class GroupedMetricsAndCancellationRegressionTests(unittest.TestCase):
 class LauncherPortSelectionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        launcher_path = Path(__file__).resolve().parents[3] / "dbagent_launcher.pyw"
-        spec = importlib.util.spec_from_file_location("dbagent_launcher_tests", launcher_path)
+        launcher_path = Path(__file__).resolve().parents[3] / "dbquill_launcher.pyw"
+        spec = importlib.util.spec_from_file_location("dbquill_launcher_tests", launcher_path)
         cls.launcher = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
         spec.loader.exec_module(cls.launcher)
@@ -13734,7 +13844,21 @@ class LauncherPortSelectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             configured = Path(temp_dir) / "python.exe"
             configured.write_bytes(b"test executable placeholder")
-            with mock.patch.dict(os.environ, {"DBAGENT_PYTHON": str(configured)}):
+            with mock.patch.dict(os.environ, {"DBQUILL_PYTHON": str(configured)}):
+                self.assertEqual(
+                    self.launcher._select_python(),
+                    str(configured.resolve()),
+                )
+
+    def test_legacy_python_runtime_override_remains_a_fallback(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            configured = Path(temp_dir) / "python.exe"
+            configured.write_bytes(b"test executable placeholder")
+            with mock.patch.dict(
+                os.environ,
+                {"DBAGENT_PYTHON": str(configured)},
+                clear=True,
+            ):
                 self.assertEqual(
                     self.launcher._select_python(),
                     str(configured.resolve()),

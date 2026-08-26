@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare repeated DB-Agent Spider runs without hiding per-case instability."""
+"""Compare repeated DBQuill Spider runs without hiding per-case instability."""
 
 from __future__ import annotations
 
@@ -255,7 +255,7 @@ def _markdown(report: dict[str, Any]) -> str:
     exact = report["exact"]
     stability = report["stability"]
     lines = [
-        "# DB-Agent Spider repeated-run stability report",
+        "# DBQuill Spider repeated-run stability report",
         "",
         f"- Runs: {report['run_count']}; fixed cases per run: {report['case_count']}",
         f"- Exact counts: {', '.join(str(item) for item in exact['counts'])}",

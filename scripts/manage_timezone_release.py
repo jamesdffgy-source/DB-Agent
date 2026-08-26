@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare, validate, activate, or roll back DB-Agent IANA release archives."""
+"""Prepare, validate, activate, or roll back DBQuill IANA release archives."""
 from __future__ import annotations
 
 import argparse
@@ -102,7 +102,7 @@ def prepare(args: argparse.Namespace) -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="DB-Agent 固定 IANA 发布管理")
+    parser = argparse.ArgumentParser(description="DBQuill 固定 IANA 发布管理")
     parser.add_argument(
         "--manifest", type=Path, default=contract.DEFAULT_MANIFEST,
         help="版本清单路径",

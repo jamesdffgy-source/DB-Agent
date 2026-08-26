@@ -1,4 +1,4 @@
-# DB-Agent 公开基准测试报告
+# DBQuill 公开基准测试报告
 
 更新时间：2026-08-25 11:50 +08:00
 
@@ -431,7 +431,7 @@ DeepSeek V4 Flash 配置，密钥和原始 endpoint 未写入报告。
 - runner 现在逐题记录 `candidate_search`，汇总触发、主修复接受、唯一替代接受、多解拒绝和无解拒绝。
   Spider 评分副本新增安全的限定 schema 标识符去引号适配；原始生产 SQL 不变。
 
-本轮结果支持的结论是“典型投影失败族已由本地合同/编译修复”，不支持“DB-Agent 全量正确率已
+本轮结果支持的结论是“典型投影失败族已由本地合同/编译修复”，不支持“DBQuill 全量正确率已
 变为 100%”。完整根因链、合同权威规则和下一阶段目标 IR 见
 `docs/BENCHMARK_ARCHITECTURE_ANALYSIS.md`。
 
@@ -569,7 +569,7 @@ schema linking 4 题、关系门禁 2 题。Hard 为 24%、Extra 为 8%，说明
 ### 5. 产品安全口径与纯 SQL 基准存在有意差异
 
 2 题因为官方 schema 没有声明足够的 FK 路径，被项目的关系门禁转为澄清。Spider 要求
-系统直接给 SQL，但 DB-Agent 的长期安全决定是不猜测未声明跨表关系。本轮没有为得分
+系统直接给 SQL，但 DBQuill 的长期安全决定是不猜测未声明跨表关系。本轮没有为得分
 绕过该门禁；这 2 题在产品口径下是保守行为，在 Spider Exact Match 中仍计为失败。
 
 ### 6. BIRD Mini-Dev 真实库执行：完整固定样本与增量优化

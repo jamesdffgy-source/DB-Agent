@@ -1,4 +1,4 @@
-"""DB Agent 会话持久化 store（SQLite 落盘）。
+"""DBQuill 会话持久化 store（SQLite 落盘）。
 
 - 数据目录：本文件同目录 data/db_sessions.db（WAL 模式）
 - 表 sessions：会话元信息（含 title 供重命名/搜索）

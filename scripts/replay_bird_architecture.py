@@ -26,7 +26,7 @@ DEFAULT_PACKAGE = ROOT / "benchmark_data" / "bird_minidev_package" / "minidev" /
 DEFAULT_REPO = ROOT / "benchmark_data" / "bird_mini_dev_official_repo"
 DEFAULT_OUTPUT = ROOT / "benchmark_results" / "bird_relational_ir_18_architecture_replay.json"
 DEFAULT_MARKDOWN = ROOT / "benchmark_results" / "bird_relational_ir_18_architecture_replay.md"
-REPLAY_CONTRACT = "dbagent-bird-local-semantic-architecture-replay-v2"
+REPLAY_CONTRACT = "dbquill-bird-local-semantic-architecture-replay-v2"
 
 
 def _atomic_json(path: Path, payload: dict) -> None:
@@ -285,7 +285,7 @@ def _summary(results: list[dict]) -> dict:
 def _markdown(payload: dict) -> str:
     summary = payload["summary"]
     return "\n".join([
-        "# DB-Agent BIRD 当前架构反事实回放",
+        "# DBQuill BIRD 当前架构反事实回放",
         "",
         f"- 适用候选：{summary['applicable']}",
         f"- 状态：`{json.dumps(summary['statuses'], ensure_ascii=False)}`",

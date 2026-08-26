@@ -1,16 +1,16 @@
 # 技术栈与代码地图
 
-最后更新：2026-08-26 15:02 +08:00
+最后更新：2026-08-27 01:28 +08:00
 
 ## 运行与桌面
 
 | 层 | 技术 | 当前事实 |
 |---|---|---|
 | 操作系统目标 | Windows | 当前为便携 Windows 桌面应用 |
-| Python | 3.12 系列 | CI 选择可用补丁版本；门禁记录实际解释器；`DBAGENT_PYTHON` 可显式覆盖 |
+| Python | 3.12 系列 | CI 选择可用补丁版本；门禁记录实际解释器；`DBQUILL_PYTHON` 可显式覆盖 |
 | 桌面容器 | pywebview 6.2.1 | 启动器创建原生窗口，页面由本地 bridge 提供 |
 | 本地服务 | aiohttp 3.14.3 | HTTP、WebSocket、静态资源与 API |
-| 启动入口 | `dbagent_launcher.pyw` | 复用同项目已鉴权 bridge，否则启动 bridge、选择空闲端口、加载图标与窗口；不再调用退役 service exit，不主动终止端口占用进程 |
+| 启动入口 | `dbquill_launcher.pyw` | 复用同项目已鉴权 bridge，否则启动 bridge、选择空闲端口、加载图标与窗口；不再调用退役 service exit，不主动终止端口占用进程 |
 
 ## 前端
 
@@ -21,15 +21,15 @@
 | 主题 | `calm-theme.css` | 克制风格和响应式覆盖 |
 | 图表 | 本地 ECharts | `desktop/static/vendor/echarts.min.js`，不依赖 CDN；后端在单个范围化只读连接上为基础业务表生成时间趋势/分类贡献/记录规模，排除 FTS 虚拟索引及影子存储；响应包含可见行数、分组数、覆盖率、截断状态和确定性摘要。前端使用 12 色稳定调色板、响应式卡片和视口附近惰性绘制；命中同一缓存时保留现有实例，每 5 秒轻量指纹探针只在数据库变化或手动刷新时替换数据 |
 | 字体 | 系统字体栈 | 不捆绑字体二进制，使用 Windows/macOS/Linux 可用的系统 UI 与等宽字体回退 |
-| 图标 | PNG/ICO | `dbagent-icon-v2.ico`、favicon 和源 PNG |
+| 图标 | PNG/ICO | `dbquill-icon-v2.ico`、favicon 和源 PNG |
 
 ## 后端与 Agent
 
 | 模块 | 技术/职责 |
 |---|---|
-| `dbagent_core.py` | Python dataclass 协议、独立 `BasicConversationRouter` 基础沟通分域、自研操作规划、SemanticCatalog 2.8、MultiMetricAggregatePlan 1.0、TrendAggregatePlan 1.3、DimensionAggregatePlan 1.2、CalendarFilterPlan 1.2、IANA/DST UTC 换日、SQL 词法安全、SchemaRelationAnalyzer、OperationGraph 3.1、schema 发现、RAG、写入安全与确认，以及 NL2SQL 双合同主链。`IntentRouter` 对不完整录入要求模型输出 `interaction=guided_insert` 和可选 `target_table`；目标表按授权 schema 精确复检，非法输出退回选表，明确高风险写操作与模型故障保留本地安全守卫/兜底。基础沟通仅整句高置信匹配问候/感谢/身份/能力/用法/告别/简单情绪，零模型、SQL 和数据读取；礼貌前缀后仍含数据库指令时继续进入 DB 主链。Schema 上下文对超大结构执行全库 token 频率降噪、保守英文单复数归一和边界匹配，按“可信匹配表间唯一最短声明 FK 路径 → 最多 64 个问句相关列 → 命中表主键 → 全局评分”分配 384 列预算；等长多路径不自动选边，无明细表以分块索引保留全部名称和省略数。token/词频/稀疏业务字典分析按表顺序、列名、PK/FK 和字典元数据签名预编译；相同标识符共享不可变结果，FK 图按多表命中惰性构建，结构原地变化自动失效，并发冷启动只发布完整索引。`RelationalAlgebraContract 1.10` 在首次模型调用前由问句/schema/显式字典编译有序物理/聚合输出、统一结果行粒度、输出所有者与实体键、聚合主体、业务/物理类型域、类型化过滤/排序、唯一 FK 路径、聚合阶段、比率分母、相关键、集合交/差/跨多跳关系的同输出实体多值覆盖、实体/输出组合去重、spending 金额 SUM、问句约束的谓词字面量来源、布尔修饰范围歧义与证据化 tie 策略；最外层投影解析跳过 CTE/subquery，显式 `also` 输出可跨句合并。唯一物理样本列上的显式引号精确过滤、带过滤的限定负关系、单数/保守复数 superlative 基数、精确值通配扩大门禁、`ALL_VALUES` 可见元组集合去重和已证明实体键的稳定单行 tie breaker 继续保留。唯一标量阈值证据优先于入向 FK 关系计数推断，唯一 schema 输出绑定优先于旧投影启发式。作用域有两种合理解释时在模型调用前澄清，澄清结果编译为强类型布尔过滤并贯穿候选搜索与语义门禁。`RelationalScalarRankingPlan` 和 `RelationalGroupedAggregatePlan` 分别编译闭合的标量 arg-min/arg-max 与保留零事实的实体标签+关系计数；关系排名计划按稳定实体键分组，显示名称不能替代身份键。统一 Local Contract Compiler 支持完整投影、稳定排序、可见元组 `DISTINCT` 和唯一抽样枚举的大小写/精确操作符编译，并可在最多 4 步内按“冲突必须变化、SQL 不得循环”单调组合；最终重跑全部范围、关系、只读和语义门禁，零额外模型调用。比率总体只接受有界问句范围和经唯一 FK 连接的 evidence 列，函数名/分子条件不能污染分母。未覆盖形状整句回退模型；`BoundedCandidateSearch 1.1` 只在高置信冲突后生成最多 3 个候选，每个重新经过访问范围、关系、单语句只读和完整语义门禁，只有唯一合格替代可执行，多解/无解 fail-closed。模型 `QueryIntentContract 1.0`、隐私最小化 grounding、空结果复核和脱敏错误传播继续保留；不按 benchmark gold 自动改写已接受 SQL。 |
+| `dbquill_core.py` | Python dataclass 协议、独立 `BasicConversationRouter` 基础沟通分域、自研操作规划、SemanticCatalog 2.8、MultiMetricAggregatePlan 1.0、TrendAggregatePlan 1.3、DimensionAggregatePlan 1.2、CalendarFilterPlan 1.2、IANA/DST UTC 换日、SQL 词法安全、SchemaRelationAnalyzer、OperationGraph 3.1、schema 发现、RAG、写入安全与确认，以及 NL2SQL 双合同主链。`IntentRouter` 对不完整录入要求模型输出 `interaction=guided_insert` 和可选 `target_table`；目标表按授权 schema 精确复检，非法输出退回选表，明确高风险写操作与模型故障保留本地安全守卫/兜底。基础沟通仅整句高置信匹配问候/感谢/身份/能力/用法/告别/简单情绪，零模型、SQL 和数据读取；礼貌前缀后仍含数据库指令时继续进入 DB 主链。Schema 上下文对超大结构执行全库 token 频率降噪、保守英文单复数归一和边界匹配，按“可信匹配表间唯一最短声明 FK 路径 → 最多 64 个问句相关列 → 命中表主键 → 全局评分”分配 384 列预算；等长多路径不自动选边，无明细表以分块索引保留全部名称和省略数。token/词频/稀疏业务字典分析按表顺序、列名、PK/FK 和字典元数据签名预编译；相同标识符共享不可变结果，FK 图按多表命中惰性构建，结构原地变化自动失效，并发冷启动只发布完整索引。`RelationalAlgebraContract 1.10` 在首次模型调用前由问句/schema/显式字典编译有序物理/聚合输出、统一结果行粒度、输出所有者与实体键、聚合主体、业务/物理类型域、类型化过滤/排序、唯一 FK 路径、聚合阶段、比率分母、相关键、集合交/差/跨多跳关系的同输出实体多值覆盖、实体/输出组合去重、spending 金额 SUM、问句约束的谓词字面量来源、布尔修饰范围歧义与证据化 tie 策略；最外层投影解析跳过 CTE/subquery，显式 `also` 输出可跨句合并。唯一物理样本列上的显式引号精确过滤、带过滤的限定负关系、单数/保守复数 superlative 基数、精确值通配扩大门禁、`ALL_VALUES` 可见元组集合去重和已证明实体键的稳定单行 tie breaker 继续保留。唯一标量阈值证据优先于入向 FK 关系计数推断，唯一 schema 输出绑定优先于旧投影启发式。作用域有两种合理解释时在模型调用前澄清，澄清结果编译为强类型布尔过滤并贯穿候选搜索与语义门禁。`RelationalScalarRankingPlan` 和 `RelationalGroupedAggregatePlan` 分别编译闭合的标量 arg-min/arg-max 与保留零事实的实体标签+关系计数；关系排名计划按稳定实体键分组，显示名称不能替代身份键。统一 Local Contract Compiler 支持完整投影、稳定排序、可见元组 `DISTINCT` 和唯一抽样枚举的大小写/精确操作符编译，并可在最多 4 步内按“冲突必须变化、SQL 不得循环”单调组合；最终重跑全部范围、关系、只读和语义门禁，零额外模型调用。比率总体只接受有界问句范围和经唯一 FK 连接的 evidence 列，函数名/分子条件不能污染分母。未覆盖形状整句回退模型；`BoundedCandidateSearch 1.1` 只在高置信冲突后生成最多 3 个候选，每个重新经过访问范围、关系、单语句只读和完整语义门禁，只有唯一合格替代可执行，多解/无解 fail-closed。模型 `QueryIntentContract 1.0`、隐私最小化 grounding、空结果复核和脱敏错误传播继续保留；不按 benchmark gold 自动改写已接受 SQL。 |
 | `RelationalGroupedMetricsPlan 1.0` | 物理 schema 绑定的通用分组多指标 IR；当问句含一个精确维度、2–6 个 COUNT/SUM/AVG/MIN/MAX、有界字面量过滤，且所有指标属于同一事实表时编译。同表直接执行；两表仅接受唯一声明 FK 或用户精确等值边，拒绝多 FK 歧义和多事实扇出。方言渲染支持 SQLite/MySQL/PostgreSQL，渲染前复核列、数值类型、聚合、关系、过滤和排序；未完整表达的问句不部分执行。 |
-| `StructuredInsertWorkflow` | 本地 SQLite 单行录入专用执行器；消费已结构化识别的 `guided_insert`，只暴露授权 schema 和经 `SQLSecurity` 读取的一行示例。模型只决定交互意图和建议表，不生成表单 SQL；提交使用字段白名单、值/默认/NULL 显式模式和本地类型化构造单条 INSERT，然后复用 `WriteSecurity → WritePreviewer 回滚 → WriteProposal → confirm_write`；不支持 BLOB、远程只读连接或行级凭据 |
+| `StructuredInsertWorkflow` | SQLite 与显式启用读写的 MySQL/PostgreSQL 单行录入执行器；消费已结构化识别的 `guided_insert`，只暴露授权 schema 和经 `SQLSecurity` 读取的一行示例。模型只决定交互意图和建议表，不生成表单 SQL；提交使用字段白名单、值/默认/NULL 显式模式和本地类型化构造单条 INSERT，然后复用 `WriteSecurity → WritePreviewer 回滚 → WriteProposal → confirm_write`；不支持 BLOB、远程只读连接或行级凭据 |
 | `StructuredCreateTableWorkflow` | 本地 SQLite 自定义建表执行器；后端重新校验 1–64 个字段、标识符、8 类 SQLite 类型白名单、单主键/整数自增/必填/唯一与受控默认值，确定性编译单条 CREATE TABLE。不让模型生成 DDL，必须复用写校验、事务回滚预览、一次性确认单、admin 批准、审计和执行前复检；远程或任何数据范围受限凭据拒绝 DDL |
 | `timezone_release_contract.py` | 项目自带 IANA 发布清单、版本解析、ZIP/TZif 加载、SHA-256 与区域/探针校验、确定性归档构建、活动发布原子切换和清单恢复 |
 | `timezone_releases/` | 可并存的版本化 TZif ZIP 与 `manifest.json`；当前完整归档 `tzdata 2026.3` / IANA `2026c`，598 区域、8 个跨区域/历史探针 |
@@ -68,8 +68,8 @@
 | SQLite | Python `sqlite3` | 核心路径已验证；查询只读、写入受控 |
 | CSV | 标准库 `csv` → SQLite | 已实现并验证基础上传链路 |
 | Excel `.xlsx` | openpyxl 3.1.5 → SQLite | 已实现并实测，多 sheet 转多表；旧 `.xls` 不受支持，选择器已移除，前端与 bridge 明确提示转换，服务端在解码/落盘前返回 415 |
-| MySQL | `PyMySQL 1.2.0` 只读适配器 | MySQL 8.4.9 本机非默认端口实测；表/列/PK/FK/行数/抽样、500 行上限、分组多指标、JOIN、拒写、多语句、超时、错密码/关端口通过；不开放远程写入与细粒度凭据 |
-| PostgreSQL | `psycopg2-binary 2.9.12` 只读适配器 | PostgreSQL 17.11 本机非默认端口实测；PK/FK 通过最小权限可见的 `pg_catalog` 发现，与 MySQL 执行同一只读合同全部通过；当前只覆盖 `public` schema |
+| MySQL | `PyMySQL 1.2.0` 双通道适配器 | MySQL 8.4.9 只读主链在本机非默认端口实测；0.2.0 新增显式启用的 DML 事务通道，INSERT/UPDATE/DELETE 已用方言事务替身验证预览回滚与确认提交，真实 MySQL 写入矩阵待补；DDL 与细粒度凭据不开放 |
+| PostgreSQL | `psycopg2-binary 2.9.12` 双通道适配器 | PostgreSQL 17.11 只读主链已实测，PK/FK 通过最小权限可见的 `pg_catalog` 发现；0.2.0 新增与 MySQL 相同的受控 DML 合同并完成回归级事务验证，真实 PostgreSQL 写入矩阵待补；当前只覆盖 `public` schema，DDL 不开放 |
 
 ## 当前关键依赖版本
 
@@ -83,19 +83,19 @@
 
 ## 源码发布与本机运行态边界
 
-- 私有 GitHub 源码仓库：`jamesdffgy-source/DB-Agent`。
+- 私有 GitHub 源码仓库：`jamesdffgy-source/DBQuill`。
 - GitHub 首页以英文 `README.md` 为默认入口、`README.zh-CN.md` 为等价中文入口，使用实际桌面
-  UI 与固定演示 SQLite 生成的 `docs/assets/dbagent-overview.png`；不使用概念性生成图冒充产品
+  UI 与固定演示 SQLite 生成的 `docs/assets/dbquill-overview.png`；不使用概念性生成图冒充产品
   界面。`SECURITY.md` 定义漏洞信息最小化和私有报告边界。上述首页文档、截图与安全策略均由
   仓库卫生/源码指纹覆盖；README 不把本地固定子集成绩描述成官方排行榜提交。
 - 版本库包含应用源码、静态前端资源、测试、固定评测、项目归档时区包、门禁脚本和长期文档。
 - `.gitignore` 排除便携 Python、本机 `model_profiles.json`、上传文件、临时目录、会话/语义/审计/身份数据库、bridge token、日志、公开 benchmark 数据/原始运行结果和根目录个人文档，防止本机秘密或运行态影响发布候选与源码指纹。
-- `demo_data/dbagent_demo.sqlite` 由生成脚本在本机创建并受现有 `*.sqlite` 排除；可复现生成器和 `docs/DEMO_TEST_GUIDE.md` 属于源码与测试资料。
+- `demo_data/dbquill_demo.sqlite` 由生成脚本在本机创建并受现有 `*.sqlite` 排除；可复现生成器和 `docs/DEMO_TEST_GUIDE.md` 属于源码与测试资料。
 - 源码克隆不包含便携 Python，但可在 Windows/Python 3.12 通过哈希锁创建 `.venv` 后验证和启动；
   本轮第二个独立 clean worktree 已从零安装并通过 350 项回归和完整非登记门禁。GitHub Actions
   工作流已纳入源码，但首轮因账户付款/额度在 runner 分配前被阻断；远程实际首跑、
   签名安装包、SBOM/依赖许可证汇总和发行签名仍是后续事项。
-- 根 MIT LICENSE 归属于 DB-Agent contributors；ECharts 与项目 tzdata 归档的来源、署名和
+- 根 MIT LICENSE 归属于 DBQuill contributors；ECharts 与项目 tzdata 归档的来源、署名和
   完整许可证位于 `THIRD_PARTY_NOTICES.md`/`third_party/licenses/`。发布树不包含字体二进制。
 
 ## 安全机制
@@ -188,9 +188,9 @@
 
 - 不接入外部数据库助手框架；不得把 `engine` 字段解释为外部框架接入口。当前值 `native` 表示自研执行链。
 - 前端目前无打包器，不应无必要引入大型 SPA 框架。
-- 远程数据库仅开放已实测的整库只读能力；远程写请求在产品边界显式拒绝，不复用 SQLite
+- 远程数据库默认仅开放已实测的整库只读能力；只有连接时显式选择受控读写才建立独立事务写通道，且只允许 INSERT/UPDATE/DELETE。预览必须回滚、确认单一次性绑定数据库、执行前复检并在异常时回滚；远程 DDL、细粒度凭据和真实服务端写入矩阵仍未开放/完成
   的 `connect_rw`/回滚预览。可复现合同入口为 `scripts/run_remote_database_e2e.py`，凭据只从
-  `DBAGENT_REMOTE_TEST_PASSWORD` 环境变量读取。
+  `DBQUILL_REMOTE_TEST_PASSWORD` 环境变量读取；v0.1 的变量名仅作兼容回退。
 
 ## 发布与可复现安装
 
@@ -205,5 +205,5 @@
 - `.github/workflows/release.yml`：只响应语义版本标签；重新 bootstrap、门禁、启动探针，然后通过
   `git archive` 生成版本化源码 ZIP、SHA-256 文件并创建 GitHub release。
 - 当前不使用 PyInstaller，不分发本机 `runtime/python` 或 `.venv`，也不声称存在签名安装器。
-- README 原创主视觉为 `docs/assets/dbagent-handdrawn-workflow.png`，真实界面证据为
-  `docs/assets/dbagent-overview.png`；两者都按二进制进入来源审计和源码指纹。
+- README 原创主视觉为 `docs/assets/dbquill-handdrawn-workflow.png`，真实界面证据为
+  `docs/assets/dbquill-overview.png`；两者都按二进制进入来源审计和源码指纹。

@@ -1,4 +1,4 @@
-"""DB Agent 只读定时操作调度器（bridge 进程内，threading 轮询）。
+"""DBQuill 只读定时操作调度器（bridge 进程内，threading 轮询）。
 
 - 任务 JSON：frontends/data/db_sched_tasks/{task_id}.json
 - 执行日志：frontends/data/db_sched_logs/YYYY-MM-DD_{任务名}.md（append，审计风格）
@@ -9,7 +9,7 @@
   - weekly    : {"mode":"weekly","weekday":0-6,"hour":H,"minute":M} 每周几 HH:MM
 - 任务类型：
   - sql : 定时执行单条只读 SELECT/WITH 查询
-  - nl  : 定时向 DB Agent 提问；若规划为写操作，只提示需要交互确认，不自动批准
+  - nl  : 定时向 DBQuill 提问；若规划为写操作，只提示需要交互确认，不自动批准
 - 线程安全：本模块所有公共函数带锁；执行在线程中运行不阻塞 aiohttp
 """
 from __future__ import annotations
@@ -120,7 +120,7 @@ def _execute_sql(path: str, sql: str) -> dict:
     sql_stripped = (sql or "").strip().rstrip(";")
     if not sql_stripped:
         return {"ok": False, "error": "SQL 为空"}
-    import dbagent_core as dc
+    import dbquill_core as dc
 
     connector = dc.DBConnector(path)
     result = dc.SQLSecurity(connector, max_rows=100, timeout_s=15.0).execute(sql_stripped)
@@ -145,7 +145,7 @@ def _execute_sql(path: str, sql: str) -> dict:
 
 
 def _validate_scheduled_sql(sql: str) -> None:
-    import dbagent_core as dc
+    import dbquill_core as dc
 
     try:
         dc.SQLSecurity(None, max_rows=100, timeout_s=15.0).validate(sql)
@@ -304,10 +304,14 @@ def run_task_once(task: dict, *, trigger: str = "scheduled") -> dict:
 
 def _run_nl(path: str, prompt: str) -> dict:
     """NL task: execute reads; stop at the write confirmation boundary."""
-    import dbagent_core as dc
+    import dbquill_core as dc
 
-    agent = dc.DBAgent(
-        llm_cfg=os.environ.get("DBAGENT_MODEL_PROFILE", "default"),
+    agent = dc.DBQuillAgent(
+        llm_cfg=(
+            os.environ.get("DBQUILL_MODEL_PROFILE")
+            or os.environ.get("DBAGENT_MODEL_PROFILE")
+            or "default"
+        ),
         db_path=path,
         sample_rows=3,
         max_rows=500,

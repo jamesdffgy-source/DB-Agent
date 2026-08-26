@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect or issue deterministic local DB-Agent role tokens."""
+"""Inspect or issue deterministic local DBQuill role tokens."""
 from __future__ import annotations
 
 import argparse
@@ -23,7 +23,7 @@ if hasattr(sys.stderr, "reconfigure"):
 
 def _tokens() -> dict[str, str]:
     if not TOKEN_FILE.is_file():
-        raise FileNotFoundError("bridge.token 不存在；请先启动一次 DB-Agent")
+        raise FileNotFoundError("bridge.token 不存在；请先启动一次 DBQuill")
     return access.derive_role_tokens(TOKEN_FILE.read_text(encoding="ascii").strip())
 
 
@@ -55,7 +55,7 @@ def issue(args: argparse.Namespace) -> dict:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="DB-Agent 本地角色令牌管理")
+    parser = argparse.ArgumentParser(description="DBQuill 本地角色令牌管理")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("status", help="只显示角色、能力和令牌指纹").set_defaults(func=status)
     issue_cmd = commands.add_parser("issue", help="显式输出指定角色令牌")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline administration for expiring DB-Agent local credentials."""
+"""Offline administration for expiring DBQuill local credentials."""
 from __future__ import annotations
 
 import argparse
@@ -52,7 +52,7 @@ def _audit_result(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="管理 DB-Agent 本地个人凭据")
+    parser = argparse.ArgumentParser(description="管理 DBQuill 本地个人凭据")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("list", help="列出脱敏凭据状态，不输出 token 或 token 哈希")
 

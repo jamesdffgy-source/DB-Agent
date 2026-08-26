@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible DB-Agent defect using synthetic data.
+description: Report a reproducible DBQuill defect using synthetic data.
 title: "[Bug] "
 labels:
   - bug
