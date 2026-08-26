@@ -1,6 +1,6 @@
 # Direct runtime dependencies. The transitive, hash-locked Windows/Python 3.12
 # environment used by CI and clean-clone setup is recorded in requirements.lock.
-aiohttp==3.14.1
+aiohttp==3.14.3
 openpyxl==3.1.5
 psycopg2-binary==2.9.12
 pymysql==1.2.0
