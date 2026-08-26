@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "profiles": [
+    {
+      "key": "profile-example",
+      "name": "Example model",
+      "model": "replace-with-model-name",
+      "base_url": "https://api.example.com/v1",
+      "api_key": "replace-with-local-api-key",
+      "api_mode": "chat_completions",
+      "retry_count": 1,
+      "connect_timeout": 10,
+      "read_timeout": 120,
+      "total_timeout": 600,
+      "stream": true,
+      "verify_tls": true
+    }
+  ]
+}

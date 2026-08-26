@@ -1,0 +1,41 @@
+name: source-release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-release:
+    name: Verify and publish source archive
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+      - name: Bootstrap isolated environment
+        shell: cmd
+        run: .\scripts\bootstrap_dev.cmd
+      - name: Run release gate
+        shell: pwsh
+        run: |
+          $env:DBAGENT_PYTHON = (Resolve-Path '.\.venv\Scripts\python.exe').Path
+          .\scripts\check_project.cmd
+          .\scripts\run_python.cmd scripts\smoke_startup.py
+      - name: Build versioned source archive
+        shell: pwsh
+        run: .\scripts\build_source_release.ps1 -Version $env:GITHUB_REF_NAME
+      - name: Create GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = Get-ChildItem -LiteralPath dist -File | Select-Object -ExpandProperty FullName
+          gh release create $env:GITHUB_REF_NAME $assets --verify-tag --generate-notes --title "DB-Agent $env:GITHUB_REF_NAME"

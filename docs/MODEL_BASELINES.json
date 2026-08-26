@@ -1,0 +1,371 @@
+{
+  "schema_version": 1,
+  "runs": [
+    {
+      "run_id": "model-82f9c3dd23c84df1ac79e22c2c2c7dda",
+      "recorded_at": "2026-08-17T10:38:13+08:00",
+      "label": "gpt-5.6-sol 首次固定基线",
+      "suite_version": "2026.08.17-v22",
+      "dataset_sha256": "48b3a0a29a934a3fd7ce4e939142b868759438ad792967b526bc1f91cd3e83d5",
+      "prompt_contract": "nl2sql-69c3a2d900859fbe",
+      "model": {
+        "config_name": "native_oai_config",
+        "name": "getoken_openai",
+        "model": "gpt-5.6-sol",
+        "api_mode": "chat_completions",
+        "endpoint_fingerprint": "7f0fcf454d967b65"
+      },
+      "status": "completed_with_failures",
+      "passed": 9,
+      "total": 12,
+      "execution_accuracy": 0.75,
+      "latency_ms": {
+        "median": 18837.694,
+        "maximum": 52441.976,
+        "total": 265234.697
+      },
+      "cases": [
+        {
+          "id": "model-count-orders",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 18385.854,
+          "sql": "SELECT COUNT(*) AS order_count FROM orders\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-paid-revenue",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 43958.294,
+          "sql": "SELECT SUM(amount) AS total_amount FROM orders WHERE status = 'paid'\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-paid-revenue-by-region",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 52441.976,
+          "sql": "SELECT c.region, SUM(o.amount) AS total_amount FROM orders AS o JOIN customers AS c ON c.id = o.customer_id WHERE o.status = 'paid' GROUP BY c.region\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-customers-without-orders",
+          "passed": false,
+          "error_category": "result_rows",
+          "latency_ms": 12476.758,
+          "sql": "SELECT c.id, c.name, c.region, c.city, c.status FROM customers AS c LEFT JOIN orders AS o ON o.customer_id = c.id WHERE o.id IS NULL\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-top-paid-customer",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 19289.534,
+          "sql": "SELECT c.name, SUM(o.amount) AS total_amount FROM orders AS o JOIN customers AS c ON c.id = o.customer_id WHERE o.status = 'paid' GROUP BY c.id, c.name ORDER BY total_amount DESC LIMIT 1",
+          "error": null
+        },
+        {
+          "id": "model-count-active-customers",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 17568.106,
+          "sql": "SELECT COUNT(*) AS active_customer_count FROM customers WHERE status = 'active'\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-average-paid-order",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 21128.185,
+          "sql": "SELECT AVG(amount) AS average_order_amount FROM orders WHERE status = 'paid'\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-paid-order-count-by-region",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 11688.597,
+          "sql": "SELECT c.region, COUNT(o.id) AS order_count\nFROM orders AS o\nJOIN customers AS c ON c.id = o.customer_id\nWHERE o.status = 'paid'\nGROUP BY c.region\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-product-quantity-by-category",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 21227.081,
+          "sql": "SELECT p.category, SUM(oi.quantity) AS total_quantity FROM order_items AS oi JOIN orders AS o ON o.id = oi.order_id JOIN products AS p ON p.id = oi.product_id GROUP BY p.category\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-customer-total-including-zero",
+          "passed": false,
+          "error_category": "result_rows",
+          "latency_ms": 21168.748,
+          "sql": "SELECT c.id, c.name, COALESCE(SUM(o.amount), 0) AS total_order_amount FROM customers AS c LEFT JOIN orders AS o ON o.customer_id = c.id GROUP BY c.id, c.name ORDER BY c.id\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-august-order-revenue",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 12552.25,
+          "sql": "SELECT COALESCE(SUM(amount), 0) AS total_amount FROM orders WHERE created_at >= '2026-08-01' AND created_at < '2026-09-01'\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-cancelled-order-customers",
+          "passed": false,
+          "error_category": "result_rows",
+          "latency_ms": 12480.024,
+          "sql": "SELECT DISTINCT c.id, c.name, c.region, c.city, c.status FROM customers AS c JOIN orders AS o ON o.customer_id = c.id WHERE o.status = 'cancelled'\nLIMIT 100",
+          "error": null
+        }
+      ]
+    },
+    {
+      "run_id": "model-f517a18614854cf5a68d27cc2a3cdf85",
+      "recorded_at": "2026-08-17T10:43:34+08:00",
+      "label": "最小必要投影提示优化",
+      "suite_version": "2026.08.17-v22",
+      "dataset_sha256": "48b3a0a29a934a3fd7ce4e939142b868759438ad792967b526bc1f91cd3e83d5",
+      "prompt_contract": "nl2sql-93aa256507b05f12",
+      "model": {
+        "config_name": "native_oai_config",
+        "name": "getoken_openai",
+        "model": "gpt-5.6-sol",
+        "api_mode": "chat_completions",
+        "endpoint_fingerprint": "7f0fcf454d967b65"
+      },
+      "status": "completed_with_failures",
+      "passed": 11,
+      "total": 12,
+      "execution_accuracy": 0.9167,
+      "latency_ms": {
+        "median": 14282.217,
+        "maximum": 27662.51,
+        "total": 203223.526
+      },
+      "cases": [
+        {
+          "id": "model-count-orders",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 16560.718,
+          "sql": "SELECT COUNT(*) AS order_count FROM orders\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-paid-revenue",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 21263.548,
+          "sql": "SELECT SUM(amount) AS total_amount FROM orders WHERE status = 'paid'\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-paid-revenue-by-region",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 19897.244,
+          "sql": "SELECT c.region, SUM(o.amount) AS total_amount FROM orders AS o JOIN customers AS c ON o.customer_id = c.id WHERE o.status = 'paid' GROUP BY c.region\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-customers-without-orders",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 13342.021,
+          "sql": "SELECT c.name FROM customers AS c WHERE NOT EXISTS (SELECT 1 FROM orders AS o WHERE o.customer_id = c.id)\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-top-paid-customer",
+          "passed": false,
+          "error_category": "result_rows",
+          "latency_ms": 10731.175,
+          "sql": "SELECT c.name FROM customers AS c JOIN orders AS o ON o.customer_id = c.id WHERE o.status = 'paid' GROUP BY c.id, c.name ORDER BY SUM(o.amount) DESC LIMIT 1",
+          "error": null
+        },
+        {
+          "id": "model-count-active-customers",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 11379.108,
+          "sql": "SELECT COUNT(*) AS count FROM customers WHERE status = 'active'\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-average-paid-order",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 27662.51,
+          "sql": "SELECT AVG(amount) FROM orders WHERE status = 'paid'\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-paid-order-count-by-region",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 14647.9,
+          "sql": "SELECT c.region, COUNT(*) AS order_count FROM orders AS o JOIN customers AS c ON o.customer_id = c.id WHERE o.status = 'paid' GROUP BY c.region\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-product-quantity-by-category",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 27381.937,
+          "sql": "SELECT p.category, SUM(oi.quantity) AS sales_quantity FROM order_items AS oi JOIN orders AS o ON o.id = oi.order_id JOIN products AS p ON p.id = oi.product_id GROUP BY p.category\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-customer-total-including-zero",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 13916.535,
+          "sql": "SELECT c.name, COALESCE(SUM(o.amount), 0) AS total_amount FROM customers AS c LEFT JOIN orders AS o ON o.customer_id = c.id GROUP BY c.id, c.name\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-august-order-revenue",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 13428.482,
+          "sql": "SELECT SUM(amount) AS total_amount FROM orders WHERE created_at >= '2026-08-01' AND created_at < '2026-09-01'\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-cancelled-order-customers",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 12522.945,
+          "sql": "SELECT DISTINCT c.name FROM customers AS c JOIN orders AS o ON o.customer_id = c.id WHERE o.status = 'cancelled'\nLIMIT 100",
+          "error": null
+        }
+      ]
+    },
+    {
+      "run_id": "model-d16e171596b241519d5002b65b7cd4a5",
+      "recorded_at": "2026-08-17T10:49:21+08:00",
+      "label": "v23 最小投影一致性基线",
+      "suite_version": "2026.08.17-v23",
+      "dataset_sha256": "813d0b63cf38cf936c761580a1d03db49e551e052f6e1ac333f13f39ea01ddd7",
+      "prompt_contract": "nl2sql-93aa256507b05f12",
+      "model": {
+        "config_name": "native_oai_config",
+        "name": "getoken_openai",
+        "model": "gpt-5.6-sol",
+        "api_mode": "chat_completions",
+        "endpoint_fingerprint": "7f0fcf454d967b65"
+      },
+      "status": "completed",
+      "passed": 12,
+      "total": 12,
+      "execution_accuracy": 1.0,
+      "latency_ms": {
+        "median": 19560.501,
+        "maximum": 49519.585,
+        "total": 263014.316
+      },
+      "cases": [
+        {
+          "id": "model-count-orders",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 49519.585,
+          "sql": "SELECT COUNT(*) AS order_count FROM orders\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-paid-revenue",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 16980.462,
+          "sql": "SELECT SUM(amount) AS total_amount FROM orders WHERE status = 'paid'\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-paid-revenue-by-region",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 25081.889,
+          "sql": "SELECT c.region, SUM(o.amount) AS total_amount FROM orders AS o JOIN customers AS c ON o.customer_id = c.id WHERE o.status = 'paid' GROUP BY c.region\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-customers-without-orders",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 11713.827,
+          "sql": "SELECT c.name FROM customers AS c WHERE NOT EXISTS (SELECT 1 FROM orders AS o WHERE o.customer_id = c.id)\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-top-paid-customer",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 13098.328,
+          "sql": "SELECT c.name FROM customers AS c JOIN orders AS o ON o.customer_id = c.id WHERE o.status = 'paid' GROUP BY c.id, c.name ORDER BY SUM(o.amount) DESC LIMIT 1",
+          "error": null
+        },
+        {
+          "id": "model-count-active-customers",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 32125.771,
+          "sql": "SELECT COUNT(*) AS active_customer_count FROM customers WHERE status = 'active'\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-average-paid-order",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 24373.184,
+          "sql": "SELECT AVG(amount) AS average_order_amount FROM orders WHERE status = 'paid'\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-paid-order-count-by-region",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 12477.737,
+          "sql": "SELECT c.region, COUNT(o.id) AS order_count FROM customers AS c JOIN orders AS o ON o.customer_id = c.id WHERE o.status = 'paid' GROUP BY c.region\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-product-quantity-by-category",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 22140.541,
+          "sql": "SELECT p.category, SUM(oi.quantity) AS sales_quantity FROM order_items AS oi JOIN products AS p ON oi.product_id = p.id GROUP BY p.category\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-customer-total-including-zero",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 24630.968,
+          "sql": "SELECT c.name, COALESCE(SUM(o.amount), 0) AS total_amount FROM customers AS c LEFT JOIN orders AS o ON o.customer_id = c.id GROUP BY c.id, c.name\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-august-order-revenue",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 15209.261,
+          "sql": "SELECT SUM(amount) AS total_amount FROM orders WHERE created_at >= '2026-08-01' AND created_at < '2026-09-01'\nLIMIT 100",
+          "error": null
+        },
+        {
+          "id": "model-cancelled-order-customers",
+          "passed": true,
+          "error_category": null,
+          "latency_ms": 14869.265,
+          "sql": "SELECT DISTINCT c.name FROM customers AS c JOIN orders AS o ON o.customer_id = c.id WHERE o.status = 'cancelled'\nLIMIT 100",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

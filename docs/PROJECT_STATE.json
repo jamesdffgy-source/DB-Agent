@@ -1,0 +1,56 @@
+{
+  "schema_version": 5,
+  "recorded_at": "2026-08-26T16:55:34+08:00",
+  "source_fingerprint": "6d8501c4226a6beb9106b2e03a4da954b4f1b90cd48ec29b09499b22b780dbff",
+  "controlled_file_count": 102,
+  "python": "3.12.13",
+  "test_command": "scripts/check_project.cmd",
+  "tests_passed": 413,
+  "evaluation": {
+    "suite_version": "2026.08.17-v23",
+    "offline_passed": 134,
+    "offline_total": 134,
+    "model_status": "not_run"
+  },
+  "timezone_release": {
+    "active_release_id": "tzdata-2026.3-iana-2026c",
+    "rollback_release_id": null,
+    "release_count": 1,
+    "tzdata_version": "2026.3",
+    "iana_version": "2026c",
+    "archive_sha256": "1dfe52a0c9649d601bc0fd36a46064cd2fcae538905f126ee6e907f0ca07821d",
+    "zones_count": 598,
+    "probes_passed": 8,
+    "probes_total": 8
+  },
+  "model_baseline": {
+    "status": "recorded",
+    "run_count": 3,
+    "latest": {
+      "run_id": "model-d16e171596b241519d5002b65b7cd4a5",
+      "recorded_at": "2026-08-17T10:49:21+08:00",
+      "suite_version": "2026.08.17-v23",
+      "dataset_sha256": "813d0b63cf38cf936c761580a1d03db49e551e052f6e1ac333f13f39ea01ddd7",
+      "prompt_contract": "nl2sql-93aa256507b05f12",
+      "model": {
+        "config_name": "native_oai_config",
+        "name": "getoken_openai",
+        "model": "gpt-5.6-sol",
+        "api_mode": "chat_completions",
+        "endpoint_fingerprint": "7f0fcf454d967b65"
+      },
+      "passed": 12,
+      "total": 12,
+      "execution_accuracy": 1.0
+    }
+  },
+  "repository_hygiene": {
+    "candidate_files": 103,
+    "text_files_scanned": 96,
+    "direct_dependencies": 7,
+    "locked_dependencies": 26,
+    "credential_findings": 0,
+    "redistributed_assets_verified": 2
+  },
+  "summary": "Final public source release with warning-free workflows and verified assets"
+}

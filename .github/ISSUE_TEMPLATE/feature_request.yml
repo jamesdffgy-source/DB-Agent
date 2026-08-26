@@ -1,0 +1,43 @@
+name: Feature request
+description: Propose a focused product or database capability.
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What database task is difficult today, and who experiences it?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the smallest useful outcome, not only a technical implementation.
+    validations:
+      required: true
+  - type: dropdown
+    id: database
+    attributes:
+      label: Relevant data source
+      options:
+        - SQLite
+        - CSV / XLSX import
+        - MySQL
+        - PostgreSQL
+        - Data-source independent
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety and compatibility
+      description: Explain effects on read-only behavior, write confirmation, authorization, privacy, or existing workflows.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

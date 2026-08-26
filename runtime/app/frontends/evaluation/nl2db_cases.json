@@ -1,0 +1,2582 @@
+{
+  "schema_version": 1,
+  "suite_version": "2026.08.17-v23",
+  "reference_date": "2026-08-05",
+  "description": "DB-Agent 自研 NL-to-Database 固定评测集。离线规划使用人工标注的 oracle_intent，不评估模型意图分类；并列指标、维度、趋势、业务日历、OperationGraph、大 Schema、参考 SQL 和安全通道验证列明的确定性协议。独立真实模型通道包含 12 个固定 SQLite 查询，覆盖单表聚合、过滤、分组、反连接、多跳 JOIN、日期范围和零值保留；模型结果不并入离线总通过率。",
+  "semantic_entries": [
+    {
+      "kind": "table_alias",
+      "term": "订单",
+      "table": "orders"
+    },
+    {
+      "kind": "table_alias",
+      "term": "客户",
+      "table": "customers"
+    },
+    {
+      "kind": "column_alias",
+      "term": "订单金额",
+      "table": "orders",
+      "column": "amount"
+    },
+    {
+      "kind": "enum_value",
+      "term": "已付款",
+      "table": "orders",
+      "column": "status",
+      "value": "paid"
+    },
+    {
+      "kind": "metric",
+      "term": "成交额",
+      "table": "orders",
+      "column": "amount",
+      "aggregation": "sum"
+    },
+    {
+      "kind": "metric",
+      "term": "订单笔数",
+      "table": "orders",
+      "aggregation": "count"
+    },
+    {
+      "kind": "metric",
+      "term": "已付款订单笔数",
+      "table": "orders",
+      "aggregation": "count",
+      "filters": [
+        {
+          "column": "status",
+          "operator": "eq",
+          "value": "paid"
+        }
+      ]
+    },
+    {
+      "kind": "metric",
+      "term": "已付款成交额",
+      "table": "orders",
+      "column": "amount",
+      "aggregation": "sum",
+      "filters": [
+        {
+          "column": "status",
+          "operator": "eq",
+          "value": "paid"
+        }
+      ]
+    },
+    {
+      "kind": "dimension",
+      "term": "客户区域",
+      "table": "customers",
+      "column": "region",
+      "hierarchy": {
+        "name": "客户地域",
+        "level": 1
+      }
+    },
+    {
+      "kind": "dimension",
+      "term": "客户城市",
+      "table": "customers",
+      "column": "city",
+      "hierarchy": {
+        "name": "客户地域",
+        "level": 2
+      }
+    },
+    {
+      "kind": "dimension",
+      "term": "活跃客户区域",
+      "table": "customers",
+      "column": "region",
+      "hierarchy": {
+        "name": "活跃客户地域",
+        "level": 1
+      },
+      "filters": [
+        {
+          "column": "status",
+          "operator": "eq",
+          "value": "active"
+        }
+      ]
+    },
+    {
+      "kind": "dimension",
+      "term": "活跃客户城市",
+      "table": "customers",
+      "column": "city",
+      "hierarchy": {
+        "name": "活跃客户地域",
+        "level": 2
+      },
+      "filters": [
+        {
+          "column": "status",
+          "operator": "eq",
+          "value": "active"
+        }
+      ]
+    },
+    {
+      "kind": "metric",
+      "term": "活跃客户数",
+      "table": "customers",
+      "aggregation": "count",
+      "filters": [
+        {
+          "column": "status",
+          "operator": "eq",
+          "value": "active"
+        }
+      ]
+    },
+    {
+      "kind": "metric",
+      "term": "客户总数",
+      "table": "customers",
+      "aggregation": "count"
+    },
+    {
+      "kind": "metric",
+      "term": "非活跃客户数",
+      "table": "customers",
+      "aggregation": "count",
+      "filters": [
+        {
+          "column": "status",
+          "operator": "eq",
+          "value": "inactive"
+        }
+      ]
+    },
+    {
+      "kind": "time_field",
+      "term": "下单时间",
+      "table": "orders",
+      "column": "created_at",
+      "default_grain": "month"
+    },
+    {
+      "kind": "ratio_metric",
+      "term": "客单价",
+      "table": "orders",
+      "formula": {
+        "operator": "divide",
+        "numerator": {
+          "aggregation": "sum",
+          "column": "amount"
+        },
+        "denominator": {
+          "aggregation": "count"
+        },
+        "scale": 1,
+        "zero_division": "null"
+      }
+    },
+    {
+      "kind": "ratio_metric",
+      "term": "付款订单占比",
+      "table": "orders",
+      "formula": {
+        "operator": "divide",
+        "numerator": {
+          "aggregation": "count",
+          "filters": [
+            {
+              "column": "status",
+              "operator": "eq",
+              "value": "paid"
+            }
+          ]
+        },
+        "denominator": {
+          "aggregation": "count"
+        },
+        "scale": 100,
+        "zero_division": "null"
+      }
+    },
+    {
+      "kind": "business_calendar",
+      "term": "公司业务日历",
+      "table": "orders",
+      "column": "created_at",
+      "calendar": {
+        "fiscal_year_start_month": 4,
+        "fiscal_year_start_day": 1,
+        "fiscal_year_label": "start_year",
+        "timezone": "Asia/Shanghai",
+        "week_start": 1,
+        "weekend_days": [
+          6,
+          7
+        ],
+        "holiday_table": "holidays",
+        "holiday_date_column": "holiday_date",
+        "holiday_name_column": "name",
+        "working_override_column": "is_working"
+      }
+    },
+    {
+      "kind": "time_field",
+      "term": "事件时间",
+      "table": "timestamp_events",
+      "column": "occurred_at",
+      "default_grain": "day"
+    },
+    {
+      "kind": "business_calendar",
+      "term": "UTC事件日历",
+      "table": "timestamp_events",
+      "column": "occurred_at",
+      "calendar": {
+        "fiscal_year_start_month": 1,
+        "fiscal_year_start_day": 1,
+        "fiscal_year_label": "start_year",
+        "timezone": "Asia/Shanghai",
+        "storage_basis": "utc_datetime",
+        "business_utc_offset_minutes": 480,
+        "week_start": 1,
+        "weekend_days": []
+      }
+    },
+    {
+      "kind": "time_field",
+      "term": "美东事件时间",
+      "table": "dst_events",
+      "column": "occurred_at",
+      "default_grain": "day"
+    },
+    {
+      "kind": "business_calendar",
+      "term": "美东事件日历",
+      "table": "dst_events",
+      "column": "occurred_at",
+      "calendar": {
+        "fiscal_year_start_month": 1,
+        "fiscal_year_start_day": 1,
+        "fiscal_year_label": "start_year",
+        "timezone": "America/New_York",
+        "storage_basis": "utc_datetime",
+        "timezone_conversion": "iana_tzdata",
+        "tzdata_version": "2026.3",
+        "iana_version": "2026c",
+        "week_start": 1,
+        "weekend_days": []
+      }
+    }
+  ],
+  "planner_cases": [
+    {
+      "id": "plan-schema-overview",
+      "question": "有哪些表",
+      "oracle_intent": "schema",
+      "expected": {
+        "action": "inspect_schema",
+        "mode": "read",
+        "target_tables": [],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-table-schema",
+      "question": "orders 表有哪些字段",
+      "oracle_intent": "schema",
+      "expected": {
+        "action": "inspect_table",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-query-target",
+      "question": "orders 一共多少条记录",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-query-ambiguous-table",
+      "question": "一共多少条记录",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": "target_table",
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-semantic-metric",
+      "question": "成交额是多少",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": [
+          "成交额"
+        ]
+      }
+    },
+    {
+      "id": "plan-controlled-filtered-metric",
+      "question": "已付款成交额是多少",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": [
+          "已付款成交额"
+        ]
+      }
+    },
+    {
+      "id": "plan-semantic-enum-query",
+      "question": "查询已付款订单",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": [
+          "已付款",
+          "订单"
+        ]
+      }
+    },
+    {
+      "id": "plan-retrieve-target",
+      "question": "介绍客户 Alice 的记录",
+      "oracle_intent": "retrieve",
+      "expected": {
+        "action": "retrieve",
+        "mode": "read",
+        "target_tables": [
+          "customers"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": [
+          "客户"
+        ]
+      }
+    },
+    {
+      "id": "plan-compose-multiple-targets",
+      "question": "结合订单统计和客户记录分析区域表现",
+      "oracle_intent": "compose",
+      "expected": {
+        "action": "analyze",
+        "mode": "read",
+        "target_tables": [
+          "customers",
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": [
+          "客户",
+          "订单"
+        ]
+      }
+    },
+    {
+      "id": "plan-update-missing-table",
+      "question": "把 status 改为 paid",
+      "oracle_intent": "write",
+      "expected": {
+        "action": "update",
+        "mode": "write",
+        "target_tables": [],
+        "risk": "medium",
+        "requires_confirmation": true,
+        "clarification": "target_table",
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-update-missing-filter",
+      "question": "把 orders 的 status 改为 paid",
+      "oracle_intent": "write",
+      "expected": {
+        "action": "update",
+        "mode": "write",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "medium",
+        "requires_confirmation": true,
+        "clarification": "filter_condition",
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-update-complete",
+      "question": "把 orders 中 id=2 的 status 改为 paid",
+      "oracle_intent": "write",
+      "expected": {
+        "action": "update",
+        "mode": "write",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "medium",
+        "requires_confirmation": true,
+        "clarification": null,
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-semantic-update-missing-filter",
+      "question": "把订单的订单金额改为 100",
+      "oracle_intent": "write",
+      "expected": {
+        "action": "update",
+        "mode": "write",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "medium",
+        "requires_confirmation": true,
+        "clarification": "filter_condition",
+        "semantic_terms": [
+          "订单",
+          "订单金额"
+        ]
+      }
+    },
+    {
+      "id": "plan-delete-missing-filter",
+      "question": "删除 orders 中的记录",
+      "oracle_intent": "write",
+      "expected": {
+        "action": "delete",
+        "mode": "write",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "high",
+        "requires_confirmation": true,
+        "clarification": "filter_condition",
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-insert-missing-values",
+      "question": "新增一条 orders 记录",
+      "oracle_intent": "write",
+      "expected": {
+        "action": "insert",
+        "mode": "write",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "medium",
+        "requires_confirmation": true,
+        "clarification": "record_values",
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-insert-complete",
+      "question": "新增一条 orders 记录，customer_id=2，amount=88，status=paid",
+      "oracle_intent": "write",
+      "expected": {
+        "action": "insert",
+        "mode": "write",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "medium",
+        "requires_confirmation": true,
+        "clarification": null,
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-create-missing-definition",
+      "question": "创建 orders_archive 表",
+      "oracle_intent": "write",
+      "expected": {
+        "action": "create",
+        "mode": "write",
+        "target_tables": [
+          "orders_archive"
+        ],
+        "risk": "high",
+        "requires_confirmation": true,
+        "clarification": "object_definition",
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-create-complete",
+      "question": "创建 orders_archive 表 (id INTEGER 主键, note TEXT)",
+      "oracle_intent": "write",
+      "expected": {
+        "action": "create",
+        "mode": "write",
+        "target_tables": [
+          "orders_archive"
+        ],
+        "risk": "high",
+        "requires_confirmation": true,
+        "clarification": null,
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-alter-missing-definition",
+      "question": "修改 orders 表的字段",
+      "oracle_intent": "write",
+      "expected": {
+        "action": "alter",
+        "mode": "write",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "high",
+        "requires_confirmation": true,
+        "clarification": "schema_change_definition",
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-alter-complete",
+      "question": "修改 orders 表，增加字段 note TEXT",
+      "oracle_intent": "write",
+      "expected": {
+        "action": "alter",
+        "mode": "write",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "high",
+        "requires_confirmation": true,
+        "clarification": null,
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-drop-table",
+      "question": "删除 customers 表",
+      "oracle_intent": "write",
+      "expected": {
+        "action": "drop",
+        "mode": "write",
+        "target_tables": [
+          "customers"
+        ],
+        "risk": "high",
+        "requires_confirmation": true,
+        "clarification": null,
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-disconnected-tables-need-relationship",
+      "question": "统计 orders 和 isolated_events 的数量",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "isolated_events",
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": "table_relationship",
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-connected-tables-use-foreign-key",
+      "question": "统计 customers 和 orders 的数量",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "customers",
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-explicit-relationship-connects-tables",
+      "question": "统计 orders 和 isolated_events 的数量，关联条件：orders.id = isolated_events.id",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "isolated_events",
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-derived-metric-needs-definition",
+      "question": "统计 orders 的转化率",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": "metric_definition",
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-controlled-ratio-metric-is-defined",
+      "question": "统计客单价",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": [
+          "客单价"
+        ]
+      }
+    },
+    {
+      "id": "plan-controlled-filtered-ratio-metric",
+      "question": "统计付款订单占比",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": [
+          "付款订单占比"
+        ]
+      }
+    },
+    {
+      "id": "plan-aggregate-needs-field",
+      "question": "计算 orders 的平均值",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": "aggregation_field",
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-aggregate-explicit-field",
+      "question": "计算 orders.amount 的平均值",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-time-needs-field",
+      "question": "统计 orders 最近的趋势",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": "time_field",
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-time-needs-range",
+      "question": "统计 orders.created_at 最近的趋势",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": "time_range",
+        "semantic_terms": [
+          "下单时间"
+        ]
+      }
+    },
+    {
+      "id": "plan-time-explicit-range",
+      "question": "统计 orders.created_at 从 2026-08-01 到 2026-08-10 的趋势",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": [
+          "下单时间"
+        ]
+      }
+    },
+    {
+      "id": "plan-semantic-dimension-targets-group-field",
+      "question": "按客户区域分组统计数量",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "customers"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": [
+          "客户区域"
+        ]
+      }
+    },
+    {
+      "id": "plan-semantic-time-field-with-explicit-range",
+      "question": "统计下单时间最近 30 天的趋势",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": [
+          "下单时间"
+        ]
+      }
+    },
+    {
+      "id": "plan-semantic-time-field-still-needs-range",
+      "question": "统计下单时间最近的趋势",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": "time_range",
+        "semantic_terms": [
+          "下单时间"
+        ]
+      }
+    },
+    {
+      "id": "plan-time-needs-grain-without-configured-default",
+      "question": "统计 orders.updated_at 从 2026-08-01 到 2026-08-10 的趋势",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": "time_grain",
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-explicit-time-grain-needs-no-default",
+      "question": "按周统计 orders.updated_at 从 2026-08-01 到 2026-08-10 的趋势",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-semantic-hierarchy-city-targets-dimension",
+      "question": "按客户城市分组统计数量",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "customers"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": [
+          "客户城市"
+        ]
+      }
+    },
+    {
+      "id": "plan-dimension-drilldown-needs-target-level",
+      "question": "客户区域下钻统计数量",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "customers"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": "dimension_level",
+        "semantic_terms": [
+          "客户区域"
+        ]
+      }
+    },
+    {
+      "id": "plan-independent-tables-do-not-need-relationship",
+      "question": "分别统计 orders 和 isolated_events 的数量",
+      "oracle_intent": "compose",
+      "expected": {
+        "action": "analyze",
+        "mode": "read",
+        "target_tables": [
+          "isolated_events",
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-multihop-foreign-key-chain",
+      "question": "统计 customers、orders、order_items 和 products 的数量",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "customers",
+          "order_items",
+          "orders",
+          "products"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": []
+      }
+    },
+    {
+      "id": "plan-fiscal-year-needs-calendar",
+      "question": "统计 orders.updated_at 2026 财年的成交额",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": "business_calendar",
+        "semantic_terms": [
+          "成交额"
+        ]
+      }
+    },
+    {
+      "id": "plan-working-days-need-calendar",
+      "question": "统计 orders.updated_at 从 2026-08-01 到 2026-08-31 的工作日订单数量",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": "business_calendar",
+        "semantic_terms": [
+          "订单"
+        ]
+      }
+    },
+    {
+      "id": "plan-fiscal-year-structured-calendar",
+      "question": "统计 orders.created_at 2026 财年的成交额",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": [
+          "成交额",
+          "公司业务日历"
+        ]
+      }
+    },
+    {
+      "id": "plan-working-days-structured-calendar",
+      "question": "统计 orders.created_at 从 2026-08-01 到 2026-08-31 的工作日订单数量",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": [
+          "订单",
+          "公司业务日历"
+        ]
+      }
+    },
+    {
+      "id": "plan-fiscal-year-explicit-calendar",
+      "question": "统计 orders.updated_at 2026 财年的成交额；业务日历：财年从 2026-04-01 开始",
+      "oracle_intent": "query",
+      "expected": {
+        "action": "select",
+        "mode": "read",
+        "target_tables": [
+          "orders"
+        ],
+        "risk": "low",
+        "requires_confirmation": false,
+        "clarification": null,
+        "semantic_terms": [
+          "成交额"
+        ]
+      }
+    }
+  ],
+  "multi_metric_cases": [
+    {
+      "id": "multi-metric-two-measures",
+      "question": "统计成交额和订单笔数",
+      "expected": {
+        "compiled": true,
+        "table": "orders",
+        "measure_terms": ["成交额", "订单笔数"],
+        "global_filters": [],
+        "columns": ["成交额", "订单笔数"],
+        "rows": [[476.0, 5]]
+      }
+    },
+    {
+      "id": "multi-metric-scoped-filter",
+      "question": "统计成交额和已付款成交额",
+      "expected": {
+        "compiled": true,
+        "table": "orders",
+        "measure_terms": ["成交额", "已付款成交额"],
+        "global_filters": [],
+        "columns": ["成交额", "已付款成交额"],
+        "rows": [[476.0, 346.0]]
+      }
+    },
+    {
+      "id": "multi-metric-global-enum-filter",
+      "question": "统计已付款的成交额和订单笔数",
+      "expected": {
+        "compiled": true,
+        "table": "orders",
+        "measure_terms": ["成交额", "订单笔数"],
+        "global_filters": [
+          {"column": "status", "operator": "eq", "value": "paid"}
+        ],
+        "columns": ["成交额", "订单笔数"],
+        "rows": [[346.0, 3]]
+      }
+    },
+    {
+      "id": "multi-metric-arithmetic-falls-back",
+      "question": "计算成交额除以订单笔数",
+      "expected": {
+        "compiled": false
+      }
+    }
+  ],
+  "calendar_cases": [
+    {
+      "id": "calendar-fiscal-year-controlled-metric",
+      "question": "统计 orders.created_at 2026 财年的成交额",
+      "expected": {
+        "compiled": true,
+        "mode": "fiscal_year",
+        "date_range": {
+          "start": "2026-04-01",
+          "end": "2027-04-01",
+          "end_inclusive": false
+        },
+        "columns": [
+          "成交额"
+        ],
+        "rows": [
+          [
+            476.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "calendar-workdays-with-overrides",
+      "question": "统计 orders.created_at 从 2026-08-01 到 2026-08-05 的工作日订单数量",
+      "expected": {
+        "compiled": true,
+        "mode": "business_days",
+        "date_range": {
+          "start": "2026-08-01",
+          "end": "2026-08-05",
+          "end_inclusive": true
+        },
+        "columns": [
+          "记录数"
+        ],
+        "rows": [
+          [
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "calendar-fiscal-quarter-controlled-metric",
+      "question": "统计 orders.created_at 2026 财年第2季度的成交额",
+      "expected": {
+        "compiled": true,
+        "mode": "fiscal_quarter",
+        "date_range": {
+          "start": "2026-07-01",
+          "end": "2026-10-01",
+          "end_inclusive": false
+        },
+        "columns": [
+          "成交额"
+        ],
+        "rows": [
+          [
+            476.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "calendar-utc-timestamp-fixed-offset",
+      "question": "统计 timestamp_events.occurred_at 从 2026-08-02 到 2026-08-02 的工作日记录数",
+      "expected": {
+        "compiled": true,
+        "mode": "business_days",
+        "date_range": {
+          "start": "2026-08-02",
+          "end": "2026-08-02",
+          "end_inclusive": true
+        },
+        "columns": [
+          "记录数"
+        ],
+        "rows": [
+          [
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "calendar-iana-dst-dynamic-date",
+      "question": "统计 dst_events.occurred_at 从 2024-07-01 到 2024-07-01 的工作日记录数",
+      "expected": {
+        "compiled": true,
+        "mode": "business_days",
+        "date_range": {
+          "start": "2024-07-01",
+          "end": "2024-07-01",
+          "end_inclusive": true
+        },
+        "timezone_conversion": "iana_tzdata",
+        "tzdata_version": "2026.3",
+        "iana_version": "2026c",
+        "columns": ["记录数"],
+        "rows": [[1]]
+      }
+    },
+    {
+      "id": "calendar-complex-grouping-falls-back",
+      "question": "统计 orders.created_at 2026 财年的成交额，并按 orders.status 分组",
+      "expected": {
+        "compiled": false
+      }
+    }
+  ],
+  "dimension_cases": [
+    {
+      "id": "dimension-group-count",
+      "question": "按客户区域统计数量",
+      "expected": {
+        "compiled": true,
+        "mode": "group_by",
+        "dimension_terms": [
+          "客户区域"
+        ],
+        "columns": [
+          "客户区域",
+          "记录数"
+        ],
+        "rows": [
+          ["华东", 2],
+          ["华北", 1],
+          ["华南", 1]
+        ]
+      }
+    },
+    {
+      "id": "dimension-controlled-metric-filter",
+      "question": "按客户区域统计活跃客户数",
+      "expected": {
+        "compiled": true,
+        "mode": "group_by",
+        "dimension_terms": [
+          "客户区域"
+        ],
+        "columns": [
+          "客户区域",
+          "活跃客户数"
+        ],
+        "rows": [
+          ["华东", 1],
+          ["华北", 1],
+          ["华南", 1]
+        ]
+      }
+    },
+    {
+      "id": "dimension-multi-metric-filter-isolation",
+      "question": "按客户区域统计客户总数和活跃客户数",
+      "expected": {
+        "compiled": true,
+        "mode": "group_by",
+        "dimension_terms": ["客户区域"],
+        "measure_terms": ["客户总数", "活跃客户数"],
+        "columns": ["客户区域", "客户总数", "活跃客户数"],
+        "rows": [
+          ["华东", 2, 1],
+          ["华北", 1, 1],
+          ["华南", 1, 1]
+        ]
+      }
+    },
+    {
+      "id": "dimension-multi-metric-drilldown",
+      "question": "从客户区域下钻到客户城市统计活跃客户数和客户总数",
+      "expected": {
+        "compiled": true,
+        "mode": "drilldown",
+        "dimension_terms": ["客户区域", "客户城市"],
+        "measure_terms": ["活跃客户数", "客户总数"],
+        "columns": ["客户区域", "客户城市", "活跃客户数", "客户总数"],
+        "rows": [
+          ["华东", "上海", 1, 1],
+          ["华东", "杭州", 0, 1],
+          ["华北", "北京", 1, 1],
+          ["华南", "深圳", 1, 1]
+        ]
+      }
+    },
+    {
+      "id": "dimension-fixed-filter-multi-metric",
+      "question": "按活跃客户区域统计客户总数和非活跃客户数",
+      "expected": {
+        "compiled": true,
+        "mode": "group_by",
+        "dimension_terms": ["活跃客户区域"],
+        "measure_terms": ["客户总数", "非活跃客户数"],
+        "dimension_filter_count": 1,
+        "columns": ["活跃客户区域", "客户总数", "非活跃客户数"],
+        "rows": [
+          ["华东", 1, 0],
+          ["华北", 1, 0],
+          ["华南", 1, 0]
+        ]
+      }
+    },
+    {
+      "id": "dimension-fixed-filter-drilldown-deduplicated",
+      "question": "从活跃客户区域下钻到活跃客户城市统计客户总数",
+      "expected": {
+        "compiled": true,
+        "mode": "drilldown",
+        "dimension_terms": ["活跃客户区域", "活跃客户城市"],
+        "measure_terms": ["客户总数"],
+        "dimension_filter_count": 1,
+        "columns": ["活跃客户区域", "活跃客户城市", "客户总数"],
+        "rows": [
+          ["华东", "上海", 1],
+          ["华北", "北京", 1],
+          ["华南", "深圳", 1]
+        ]
+      }
+    },
+    {
+      "id": "dimension-explicit-same-table-drilldown",
+      "question": "从客户区域下钻到客户城市统计数量",
+      "expected": {
+        "compiled": true,
+        "mode": "drilldown",
+        "dimension_terms": [
+          "客户区域",
+          "客户城市"
+        ],
+        "columns": [
+          "客户区域",
+          "客户城市",
+          "记录数"
+        ],
+        "rows": [
+          ["华东", "上海", 1],
+          ["华东", "杭州", 1],
+          ["华北", "北京", 1],
+          ["华南", "深圳", 1]
+        ]
+      }
+    },
+    {
+      "id": "dimension-complex-condition-falls-back",
+      "question": "按客户区域统计数量，并且 status = active",
+      "expected": {
+        "compiled": false
+      }
+    }
+  ],
+  "trend_cases": [
+    {
+      "id": "trend-day-count",
+      "question": "按日统计下单时间的订单数量",
+      "expected": {
+        "compiled": true,
+        "grain": "day",
+        "grain_source": "explicit",
+        "storage_basis": "declared_date",
+        "columns": ["日期", "记录数"],
+        "rows": [
+          ["2026-07-31", 1],
+          ["2026-08-01", 1],
+          ["2026-08-02", 1],
+          ["2026-08-03", 1],
+          ["2026-08-05", 1]
+        ]
+      }
+    },
+    {
+      "id": "trend-week-count",
+      "question": "按周统计下单时间的订单数量",
+      "expected": {
+        "compiled": true,
+        "grain": "week",
+        "columns": ["周起始日", "记录数"],
+        "rows": [
+          ["2026-07-27", 3],
+          ["2026-08-03", 2]
+        ]
+      }
+    },
+    {
+      "id": "trend-month-controlled-metric",
+      "question": "按月统计下单时间的已付款成交额",
+      "expected": {
+        "compiled": true,
+        "grain": "month",
+        "columns": ["月份", "已付款成交额"],
+        "rows": [
+          ["2026-08", 346.0]
+        ]
+      }
+    },
+    {
+      "id": "trend-quarter-count",
+      "question": "按季度统计下单时间的订单数量",
+      "expected": {
+        "compiled": true,
+        "grain": "quarter",
+        "columns": ["季度", "记录数"],
+        "rows": [
+          ["2026-Q3", 5]
+        ]
+      }
+    },
+    {
+      "id": "trend-year-count",
+      "question": "按年统计下单时间的订单数量",
+      "expected": {
+        "compiled": true,
+        "grain": "year",
+        "columns": ["年份", "记录数"],
+        "rows": [
+          ["2026", 5]
+        ]
+      }
+    },
+    {
+      "id": "trend-utc-timestamp-day",
+      "question": "按日统计事件时间的数量",
+      "expected": {
+        "compiled": true,
+        "grain": "day",
+        "storage_basis": "utc_datetime",
+        "columns": ["日期", "记录数"],
+        "rows": [
+          ["2026-08-01", 1],
+          ["2026-08-02", 2],
+          ["2026-08-03", 1]
+        ]
+      }
+    },
+    {
+      "id": "trend-iana-dst-winter-summer-boundaries",
+      "question": "按日统计美东事件时间的数量",
+      "expected": {
+        "compiled": true,
+        "grain": "day",
+        "storage_basis": "utc_datetime",
+        "timezone_conversion": "iana_tzdata",
+        "tzdata_version": "2026.3",
+        "iana_version": "2026c",
+        "columns": ["日期", "记录数"],
+        "rows": [
+          ["2023-12-31", 1],
+          ["2024-01-01", 1],
+          ["2024-06-30", 1],
+          ["2024-07-01", 1]
+        ]
+      }
+    },
+    {
+      "id": "trend-month-multi-metric-filter-isolation",
+      "question": "按月统计下单时间的订单笔数和已付款订单笔数",
+      "expected": {
+        "compiled": true,
+        "grain": "month",
+        "measure_terms": ["订单笔数", "已付款订单笔数"],
+        "columns": ["月份", "订单笔数", "已付款订单笔数"],
+        "rows": [
+          ["2026-07", 1, 0],
+          ["2026-08", 4, 3]
+        ]
+      }
+    },
+    {
+      "id": "trend-range-multi-metric-filter-isolation",
+      "question": "统计下单时间从 2026-08-01 到 2026-08-03 的成交额和已付款成交额趋势",
+      "expected": {
+        "compiled": true,
+        "grain": "month",
+        "grain_source": "semantic_default",
+        "measure_terms": ["成交额", "已付款成交额"],
+        "columns": ["月份", "成交额", "已付款成交额"],
+        "rows": [
+          ["2026-08", 400.5, 320.5]
+        ]
+      }
+    },
+    {
+      "id": "trend-relative-days-fixed-reference",
+      "question": "统计下单时间最近 5 天的订单数量趋势",
+      "expected": {
+        "compiled": true,
+        "grain": "month",
+        "grain_source": "semantic_default",
+        "window_source": "relative",
+        "reference_date": "2026-08-05",
+        "reference_source": "injected_reference",
+        "date_range": {
+          "start": "2026-08-01",
+          "end": "2026-08-05",
+          "end_inclusive": true,
+          "source": "relative",
+          "expression": "最近 5 天",
+          "unit": "day",
+          "count": 5,
+          "days": 5,
+          "reference_date": "2026-08-05",
+          "reference_source": "injected_reference"
+        },
+        "columns": ["月份", "记录数"],
+        "rows": [["2026-08", 4]]
+      }
+    },
+    {
+      "id": "trend-relative-days-explicit-anchor",
+      "question": "截至 2026-08-03，按日统计下单时间最近 2 天的订单数量趋势",
+      "expected": {
+        "compiled": true,
+        "grain": "day",
+        "window_source": "relative",
+        "reference_date": "2026-08-03",
+        "reference_source": "explicit_anchor",
+        "columns": ["日期", "记录数"],
+        "rows": [["2026-08-02", 1], ["2026-08-03", 1]]
+      }
+    },
+    {
+      "id": "trend-relative-weeks-inclusive-window",
+      "question": "统计下单时间最近 1 周的订单数量趋势",
+      "expected": {
+        "compiled": true,
+        "grain": "month",
+        "window_source": "relative",
+        "reference_date": "2026-08-05",
+        "reference_source": "injected_reference",
+        "columns": ["月份", "记录数"],
+        "rows": [["2026-07", 1], ["2026-08", 4]]
+      }
+    },
+    {
+      "id": "trend-relative-months-ambiguous-falls-back",
+      "question": "统计下单时间最近 2 个月的订单数量趋势",
+      "expected": {
+        "compiled": false
+      }
+    },
+    {
+      "id": "trend-fiscal-workdays-calendar-window",
+      "question": "按月统计下单时间 2026 财年工作日的订单数量趋势",
+      "expected": {
+        "compiled": true,
+        "grain": "month",
+        "window_source": "business_calendar",
+        "calendar_term": "公司业务日历",
+        "calendar_mode": "fiscal_business_days",
+        "week_start_iso": 1,
+        "columns": ["月份", "记录数"],
+        "rows": [["2026-07", 1], ["2026-08", 1]]
+      }
+    },
+    {
+      "id": "trend-fiscal-quarter-calendar-window",
+      "question": "按月统计下单时间 2026 财年第 2 季度的成交额趋势",
+      "expected": {
+        "compiled": true,
+        "grain": "month",
+        "window_source": "business_calendar",
+        "calendar_term": "公司业务日历",
+        "calendar_mode": "fiscal_quarter",
+        "columns": ["月份", "成交额"],
+        "rows": [["2026-07", 50.0], ["2026-08", 426.0]]
+      }
+    },
+    {
+      "id": "trend-conflicting-fiscal-and-exact-range-falls-back",
+      "question": "统计下单时间 2026 财年从 2026-08-01 到 2026-08-05 的订单数量趋势",
+      "expected": {
+        "compiled": false
+      }
+    },
+    {
+      "id": "trend-complex-condition-falls-back",
+      "question": "按月统计下单时间的订单数量，并且 status = paid",
+      "expected": {
+        "compiled": false
+      }
+    }
+  ],
+  "graph_cases": [
+    {
+      "id": "graph-quantitative-query-only",
+      "question": "统计 orders 的数量和平均金额",
+      "expected": {
+        "strategy": "deterministic",
+        "target_tables": [
+          "orders"
+        ],
+        "nodes": [
+          {
+            "node_id": "query-data",
+            "tool": "query",
+            "depends_on": [],
+            "output_type": "tabular_query_result"
+          },
+          {
+            "node_id": "synthesize-answer",
+            "tool": "synthesize",
+            "depends_on": [
+              "query-data"
+            ],
+            "output_type": "composed_answer"
+          }
+        ],
+        "relation_connected": null
+      }
+    },
+    {
+      "id": "graph-context-retrieval-only",
+      "question": "根据 orders 的备注内容说明主要原因",
+      "expected": {
+        "strategy": "deterministic",
+        "target_tables": [
+          "orders"
+        ],
+        "nodes": [
+          {
+            "node_id": "retrieve-context",
+            "tool": "retrieve",
+            "depends_on": [],
+            "output_type": "evidence_result"
+          },
+          {
+            "node_id": "synthesize-answer",
+            "tool": "synthesize",
+            "depends_on": [
+              "retrieve-context"
+            ],
+            "output_type": "composed_answer"
+          }
+        ],
+        "relation_connected": null
+      }
+    },
+    {
+      "id": "graph-mixed-parallel-branches",
+      "question": "结合 orders 的数量和记录内容给出结论",
+      "expected": {
+        "strategy": "deterministic",
+        "target_tables": [
+          "orders"
+        ],
+        "nodes": [
+          {
+            "node_id": "query-data",
+            "tool": "query",
+            "depends_on": [],
+            "output_type": "tabular_query_result"
+          },
+          {
+            "node_id": "retrieve-context",
+            "tool": "retrieve",
+            "depends_on": [],
+            "output_type": "evidence_result"
+          },
+          {
+            "node_id": "synthesize-answer",
+            "tool": "synthesize",
+            "depends_on": [
+              "query-data",
+              "retrieve-context"
+            ],
+            "output_type": "composed_answer"
+          }
+        ],
+        "relation_connected": null
+      }
+    },
+    {
+      "id": "graph-connected-cross-table-preflight",
+      "question": "统计 customers 和 orders 的金额对比",
+      "expected": {
+        "strategy": "deterministic",
+        "target_tables": [
+          "customers",
+          "orders"
+        ],
+        "nodes": [
+          {
+            "node_id": "inspect-relations",
+            "tool": "inspect_relations",
+            "depends_on": [],
+            "output_type": "relation_check"
+          },
+          {
+            "node_id": "query-data",
+            "tool": "query",
+            "depends_on": [
+              "inspect-relations"
+            ],
+            "output_type": "tabular_query_result"
+          },
+          {
+            "node_id": "synthesize-answer",
+            "tool": "synthesize",
+            "depends_on": [
+              "query-data"
+            ],
+            "output_type": "composed_answer"
+          }
+        ],
+        "relation_connected": true
+      }
+    },
+    {
+      "id": "graph-disconnected-cross-table-preflight",
+      "question": "统计 orders 和 isolated_events 的数量对比",
+      "expected": {
+        "strategy": "deterministic",
+        "target_tables": [
+          "isolated_events",
+          "orders"
+        ],
+        "nodes": [
+          {
+            "node_id": "inspect-relations",
+            "tool": "inspect_relations",
+            "depends_on": [],
+            "output_type": "relation_check"
+          },
+          {
+            "node_id": "query-data",
+            "tool": "query",
+            "depends_on": [
+              "inspect-relations"
+            ],
+            "output_type": "tabular_query_result"
+          },
+          {
+            "node_id": "synthesize-answer",
+            "tool": "synthesize",
+            "depends_on": [
+              "query-data"
+            ],
+            "output_type": "composed_answer"
+          }
+        ],
+        "relation_connected": false
+      }
+    },
+    {
+      "id": "graph-explicit-cross-table-relationship",
+      "question": "统计 orders 和 isolated_events 的数量对比，关联条件：orders.id = isolated_events.id",
+      "expected": {
+        "strategy": "deterministic",
+        "target_tables": [
+          "isolated_events",
+          "orders"
+        ],
+        "nodes": [
+          {
+            "node_id": "inspect-relations",
+            "tool": "inspect_relations",
+            "depends_on": [],
+            "output_type": "relation_check"
+          },
+          {
+            "node_id": "query-data",
+            "tool": "query",
+            "depends_on": [
+              "inspect-relations"
+            ],
+            "output_type": "tabular_query_result"
+          },
+          {
+            "node_id": "synthesize-answer",
+            "tool": "synthesize",
+            "depends_on": [
+              "query-data"
+            ],
+            "output_type": "composed_answer"
+          }
+        ],
+        "relation_connected": true
+      }
+    },
+    {
+      "id": "graph-independent-multi-query",
+      "question": "分别统计 orders 和 isolated_events 的数量",
+      "expected": {
+        "strategy": "deterministic-multi-query",
+        "target_tables": [
+          "isolated_events",
+          "orders"
+        ],
+        "nodes": [
+          {
+            "node_id": "query-1",
+            "tool": "query",
+            "depends_on": [],
+            "output_type": "tabular_query_result"
+          },
+          {
+            "node_id": "query-2",
+            "tool": "query",
+            "depends_on": [],
+            "output_type": "tabular_query_result"
+          },
+          {
+            "node_id": "synthesize-answer",
+            "tool": "synthesize",
+            "depends_on": [
+              "query-1",
+              "query-2"
+            ],
+            "output_type": "composed_answer"
+          }
+        ],
+        "relation_connected": null
+      }
+    },
+    {
+      "id": "graph-independent-conditional-retrieval",
+      "question": "分别统计 orders 和 isolated_events 的数量，如果有数据再查看记录内容",
+      "expected": {
+        "strategy": "deterministic-multi-query-conditional",
+        "target_tables": [
+          "isolated_events",
+          "orders"
+        ],
+        "nodes": [
+          {
+            "node_id": "query-1",
+            "tool": "query",
+            "depends_on": [],
+            "output_type": "tabular_query_result"
+          },
+          {
+            "node_id": "query-2",
+            "tool": "query",
+            "depends_on": [],
+            "output_type": "tabular_query_result"
+          },
+          {
+            "node_id": "retrieve-context",
+            "tool": "retrieve",
+            "depends_on": [
+              "query-1",
+              "query-2"
+            ],
+            "output_type": "evidence_result"
+          },
+          {
+            "node_id": "synthesize-answer",
+            "tool": "synthesize",
+            "depends_on": [
+              "query-1",
+              "query-2",
+              "retrieve-context"
+            ],
+            "output_type": "composed_answer"
+          }
+        ],
+        "relation_connected": null
+      }
+    },
+    {
+      "id": "graph-three-independent-queries",
+      "question": "分别统计 customers、products 和 isolated_events 的数量",
+      "expected": {
+        "strategy": "deterministic-multi-query",
+        "target_tables": [
+          "customers",
+          "isolated_events",
+          "products"
+        ],
+        "nodes": [
+          {
+            "node_id": "query-1",
+            "tool": "query",
+            "depends_on": [],
+            "output_type": "tabular_query_result"
+          },
+          {
+            "node_id": "query-2",
+            "tool": "query",
+            "depends_on": [],
+            "output_type": "tabular_query_result"
+          },
+          {
+            "node_id": "query-3",
+            "tool": "query",
+            "depends_on": [],
+            "output_type": "tabular_query_result"
+          },
+          {
+            "node_id": "synthesize-answer",
+            "tool": "synthesize",
+            "depends_on": [
+              "query-1",
+              "query-2",
+              "query-3"
+            ],
+            "output_type": "composed_answer"
+          }
+        ],
+        "relation_connected": null
+      }
+    },
+    {
+      "id": "graph-six-independent-queries",
+      "question": "分别统计 customers、orders、products、order_items、isolated_events 和 holidays 的数量",
+      "expected": {
+        "strategy": "deterministic-multi-query",
+        "target_tables": [
+          "customers",
+          "holidays",
+          "isolated_events",
+          "order_items",
+          "orders",
+          "products"
+        ],
+        "nodes": [
+          {
+            "node_id": "query-1",
+            "tool": "query",
+            "depends_on": [],
+            "output_type": "tabular_query_result"
+          },
+          {
+            "node_id": "query-2",
+            "tool": "query",
+            "depends_on": [],
+            "output_type": "tabular_query_result"
+          },
+          {
+            "node_id": "query-3",
+            "tool": "query",
+            "depends_on": [],
+            "output_type": "tabular_query_result"
+          },
+          {
+            "node_id": "query-4",
+            "tool": "query",
+            "depends_on": [],
+            "output_type": "tabular_query_result"
+          },
+          {
+            "node_id": "query-5",
+            "tool": "query",
+            "depends_on": [],
+            "output_type": "tabular_query_result"
+          },
+          {
+            "node_id": "query-6",
+            "tool": "query",
+            "depends_on": [],
+            "output_type": "tabular_query_result"
+          },
+          {
+            "node_id": "synthesize-answer",
+            "tool": "synthesize",
+            "depends_on": [
+              "query-1",
+              "query-2",
+              "query-3",
+              "query-4",
+              "query-5",
+              "query-6"
+            ],
+            "output_type": "composed_answer"
+          }
+        ],
+        "relation_connected": null
+      }
+    },
+    {
+      "id": "graph-independent-word-does-not-bypass-relation",
+      "question": "分别统计 orders 和 isolated_events 的关联数量",
+      "expected": {
+        "strategy": "deterministic",
+        "target_tables": [
+          "isolated_events",
+          "orders"
+        ],
+        "nodes": [
+          {
+            "node_id": "inspect-relations",
+            "tool": "inspect_relations",
+            "depends_on": [],
+            "output_type": "relation_check"
+          },
+          {
+            "node_id": "query-data",
+            "tool": "query",
+            "depends_on": [
+              "inspect-relations"
+            ],
+            "output_type": "tabular_query_result"
+          },
+          {
+            "node_id": "synthesize-answer",
+            "tool": "synthesize",
+            "depends_on": [
+              "query-data"
+            ],
+            "output_type": "composed_answer"
+          }
+        ],
+        "relation_connected": false
+      }
+    },
+    {
+      "id": "graph-multihop-four-table-preflight",
+      "question": "统计 customers、orders、order_items 和 products 的数量对比",
+      "expected": {
+        "strategy": "deterministic",
+        "target_tables": [
+          "customers",
+          "order_items",
+          "orders",
+          "products"
+        ],
+        "nodes": [
+          {
+            "node_id": "inspect-relations",
+            "tool": "inspect_relations",
+            "depends_on": [],
+            "output_type": "relation_check"
+          },
+          {
+            "node_id": "query-data",
+            "tool": "query",
+            "depends_on": [
+              "inspect-relations"
+            ],
+            "output_type": "tabular_query_result"
+          },
+          {
+            "node_id": "synthesize-answer",
+            "tool": "synthesize",
+            "depends_on": [
+              "query-data"
+            ],
+            "output_type": "composed_answer"
+          }
+        ],
+        "relation_connected": true
+      }
+    }
+  ],
+  "large_schema_cases": [
+    {
+      "id": "large-schema-four-hop-relationship",
+      "question": "验证 customers 到 products 的多跳关系",
+      "tables": [
+        "customers",
+        "products"
+      ],
+      "expected": {
+        "table_count": 64,
+        "connected": true,
+        "paths": [
+          [
+            "customers",
+            "orders",
+            "order_items",
+            "products"
+          ]
+        ],
+        "invalid_tables": [],
+        "compact_table_count": 64
+      }
+    },
+    {
+      "id": "large-schema-shared-hub-relationship",
+      "question": "验证 categories 和 suppliers 的共享产品关系",
+      "tables": [
+        "categories",
+        "suppliers"
+      ],
+      "expected": {
+        "table_count": 64,
+        "connected": true,
+        "paths": [
+          [
+            "categories",
+            "products",
+            "suppliers"
+          ]
+        ],
+        "invalid_tables": [],
+        "compact_table_count": 64
+      }
+    },
+    {
+      "id": "large-schema-isolated-table",
+      "question": "验证 customers 和 audit_events 保持隔离",
+      "tables": [
+        "customers",
+        "audit_events"
+      ],
+      "expected": {
+        "table_count": 64,
+        "connected": false,
+        "paths": [
+          [
+            "customers",
+            "audit_events"
+          ]
+        ],
+        "invalid_tables": [],
+        "compact_table_count": 64
+      }
+    },
+    {
+      "id": "large-schema-invalid-table",
+      "question": "验证不存在表被明确标记",
+      "tables": [
+        "customers",
+        "missing_table"
+      ],
+      "expected": {
+        "table_count": 64,
+        "connected": false,
+        "paths": [],
+        "invalid_tables": [
+          "missing_table"
+        ],
+        "compact_table_count": 64
+      }
+    },
+    {
+      "id": "large-schema-explicit-relation",
+      "question": "关联条件：audit_events.id = products.id",
+      "tables": [
+        "audit_events",
+        "products"
+      ],
+      "expected": {
+        "table_count": 64,
+        "connected": true,
+        "paths": [
+          [
+            "audit_events",
+            "products"
+          ]
+        ],
+        "invalid_tables": [],
+        "compact_table_count": 64
+      }
+    }
+  ],
+  "reference_sql_cases": [
+    {
+      "id": "sql-count-orders",
+      "question": "订单一共有多少条？",
+      "sql": "SELECT COUNT(*) AS total FROM orders",
+      "expected_columns": [
+        "total"
+      ],
+      "expected_rows": [
+        [
+          5
+        ]
+      ],
+      "ordered": true
+    },
+    {
+      "id": "sql-paid-revenue",
+      "question": "已付款订单的成交额是多少？",
+      "sql": "SELECT ROUND(SUM(amount), 2) AS paid_revenue FROM orders WHERE status = 'paid'",
+      "expected_columns": [
+        "paid_revenue"
+      ],
+      "expected_rows": [
+        [
+          346.0
+        ]
+      ],
+      "ordered": true
+    },
+    {
+      "id": "sql-paid-revenue-by-region",
+      "question": "按区域统计已付款订单成交额。",
+      "sql": "SELECT c.region, ROUND(SUM(o.amount), 2) AS paid_revenue FROM customers c JOIN orders o ON o.customer_id = c.id WHERE o.status = 'paid' GROUP BY c.region ORDER BY c.region",
+      "expected_columns": [
+        "region",
+        "paid_revenue"
+      ],
+      "expected_rows": [
+        [
+          "华东",
+          120.5
+        ],
+        [
+          "华北",
+          225.5
+        ]
+      ],
+      "ordered": true
+    },
+    {
+      "id": "sql-customers-without-orders",
+      "question": "哪些客户还没有订单？",
+      "sql": "SELECT c.name FROM customers c LEFT JOIN orders o ON o.customer_id = c.id WHERE o.id IS NULL ORDER BY c.name",
+      "expected_columns": [
+        "name"
+      ],
+      "expected_rows": [
+        [
+          "Dana"
+        ]
+      ],
+      "ordered": true
+    },
+    {
+      "id": "sql-top-paid-customer",
+      "question": "已付款订单成交额最高的客户是谁？",
+      "sql": "WITH paid_totals AS (SELECT customer_id, SUM(amount) AS total FROM orders WHERE status = 'paid' GROUP BY customer_id) SELECT c.name, ROUND(p.total, 2) AS paid_revenue FROM paid_totals p JOIN customers c ON c.id = p.customer_id ORDER BY p.total DESC, c.id LIMIT 1",
+      "expected_columns": [
+        "name",
+        "paid_revenue"
+      ],
+      "expected_rows": [
+        [
+          "Bob",
+          225.5
+        ]
+      ],
+      "ordered": true
+    },
+    {
+      "id": "sql-paid-line-revenue-by-region",
+      "question": "按客户区域统计已付款订单明细金额",
+      "sql": "SELECT c.region, ROUND(SUM(oi.quantity * oi.unit_price), 2) AS revenue FROM customers c JOIN orders o ON o.customer_id = c.id JOIN order_items oi ON oi.order_id = o.id WHERE o.status = 'paid' GROUP BY c.region ORDER BY c.region",
+      "expected_columns": [
+        "region",
+        "revenue"
+      ],
+      "expected_rows": [
+        [
+          "华东",
+          120.5
+        ],
+        [
+          "华北",
+          225.5
+        ]
+      ],
+      "ordered": true
+    }
+  ],
+  "security_cases": [
+    {
+      "id": "read-allow-select",
+      "path": "read",
+      "sql": "SELECT id, amount FROM orders ORDER BY id",
+      "expected_allowed": true
+    },
+    {
+      "id": "read-allow-cte",
+      "path": "read",
+      "sql": "WITH paid AS (SELECT amount FROM orders WHERE status='paid') SELECT SUM(amount) FROM paid",
+      "expected_allowed": true
+    },
+    {
+      "id": "read-block-update",
+      "path": "read",
+      "sql": "UPDATE orders SET status='paid' WHERE id=2",
+      "expected_allowed": false
+    },
+    {
+      "id": "read-block-delete",
+      "path": "read",
+      "sql": "DELETE FROM orders WHERE id=1",
+      "expected_allowed": false
+    },
+    {
+      "id": "read-block-pragma",
+      "path": "read",
+      "sql": "PRAGMA table_info(orders)",
+      "expected_allowed": false
+    },
+    {
+      "id": "read-block-multiple-statements",
+      "path": "read",
+      "sql": "SELECT 1; DROP TABLE orders",
+      "expected_allowed": false
+    },
+    {
+      "id": "read-block-second-select",
+      "path": "read",
+      "sql": "SELECT 1; SELECT 2",
+      "expected_allowed": false
+    },
+    {
+      "id": "read-allow-dangerous-words-in-literal",
+      "path": "read",
+      "sql": "SELECT 'DROP TABLE orders; PRAGMA writable_schema' AS note",
+      "expected_allowed": true
+    },
+    {
+      "id": "read-allow-dangerous-words-in-comment",
+      "path": "read",
+      "sql": "SELECT COUNT(*) FROM orders /* DROP TABLE customers; */",
+      "expected_allowed": true
+    },
+    {
+      "id": "read-allow-postgres-dollar-literal",
+      "path": "read",
+      "sql": "SELECT $$DROP TABLE orders;$$ AS note",
+      "expected_allowed": true
+    },
+    {
+      "id": "read-block-load-extension",
+      "path": "read",
+      "sql": "SELECT load_extension('unsafe')",
+      "expected_allowed": false
+    },
+    {
+      "id": "read-block-file-function",
+      "path": "read",
+      "sql": "SELECT readfile('C:/Windows/win.ini')",
+      "expected_allowed": false
+    },
+    {
+      "id": "read-block-quoted-dangerous-function",
+      "path": "read",
+      "sql": "SELECT \"load_extension\"('unsafe')",
+      "expected_allowed": false
+    },
+    {
+      "id": "read-block-mysql-executable-comment",
+      "path": "read",
+      "sql": "SELECT 1 /*!50000 UNION SELECT 2 */",
+      "expected_allowed": false
+    },
+    {
+      "id": "read-allow-executable-comment-text-in-literal",
+      "path": "read",
+      "sql": "SELECT '/*!50000 UNION SELECT 2 */' AS note",
+      "expected_allowed": true
+    },
+    {
+      "id": "write-allow-update-with-filter",
+      "path": "write",
+      "sql": "UPDATE orders SET status='paid' WHERE id=2",
+      "expected_allowed": true
+    },
+    {
+      "id": "write-allow-insert",
+      "path": "write",
+      "sql": "INSERT INTO orders(customer_id, amount, status, created_at) VALUES (4, 66, 'pending', '2026-08-06')",
+      "expected_allowed": true
+    },
+    {
+      "id": "write-allow-confirmed-ddl-policy",
+      "path": "write",
+      "sql": "DROP TABLE orders",
+      "expected_allowed": true
+    },
+    {
+      "id": "write-block-unbounded-update",
+      "path": "write",
+      "sql": "UPDATE orders SET status='paid'",
+      "expected_allowed": false
+    },
+    {
+      "id": "write-block-unbounded-delete",
+      "path": "write",
+      "sql": "DELETE FROM orders",
+      "expected_allowed": false
+    },
+    {
+      "id": "write-block-select",
+      "path": "write",
+      "sql": "SELECT * FROM orders",
+      "expected_allowed": false
+    },
+    {
+      "id": "write-block-system-operation",
+      "path": "write",
+      "sql": "PRAGMA writable_schema=ON",
+      "expected_allowed": false
+    },
+    {
+      "id": "write-block-multiple-statements",
+      "path": "write",
+      "sql": "UPDATE orders SET status='paid' WHERE id=2; DROP TABLE customers",
+      "expected_allowed": false
+    },
+    {
+      "id": "write-block-comment-only-where",
+      "path": "write",
+      "sql": "UPDATE orders SET status='paid' /* WHERE id=2 */",
+      "expected_allowed": false
+    },
+    {
+      "id": "write-block-literal-only-where",
+      "path": "write",
+      "sql": "UPDATE orders SET status='WHERE id=2'",
+      "expected_allowed": false
+    },
+    {
+      "id": "write-block-mysql-comment-only-where",
+      "path": "write",
+      "sql": "UPDATE orders SET status='paid' # WHERE id=2",
+      "expected_allowed": false
+    },
+    {
+      "id": "write-block-postgres-dollar-only-where",
+      "path": "write",
+      "sql": "UPDATE orders SET status=$$WHERE id=2$$",
+      "expected_allowed": false
+    },
+    {
+      "id": "write-block-postgres-nested-comment-only-where",
+      "path": "write",
+      "sql": "UPDATE orders SET status='paid' /* outer /* WHERE id=2 */ still comment */",
+      "expected_allowed": false
+    },
+    {
+      "id": "write-allow-semicolon-in-literal",
+      "path": "write",
+      "sql": "UPDATE orders SET status='paid;verified' WHERE id=2",
+      "expected_allowed": true
+    },
+    {
+      "id": "write-allow-dangerous-words-in-comment",
+      "path": "write",
+      "sql": "UPDATE orders SET status='paid' WHERE id=2 /* DROP TABLE customers; */",
+      "expected_allowed": true
+    }
+  ],
+  "model_cases": [
+    {
+      "id": "model-count-orders",
+      "question": "订单一共有多少条？",
+      "expected_rows": [
+        [
+          5
+        ]
+      ],
+      "ordered": true
+    },
+    {
+      "id": "model-paid-revenue",
+      "question": "已付款订单的成交额是多少？",
+      "expected_rows": [
+        [
+          346.0
+        ]
+      ],
+      "ordered": true
+    },
+    {
+      "id": "model-paid-revenue-by-region",
+      "question": "按区域统计已付款订单成交额。",
+      "expected_rows": [
+        [
+          "华东",
+          120.5
+        ],
+        [
+          "华北",
+          225.5
+        ]
+      ],
+      "ordered": true
+    },
+    {
+      "id": "model-customers-without-orders",
+      "question": "哪些客户还没有订单？",
+      "expected_rows": [
+        [
+          "Dana"
+        ]
+      ],
+      "ordered": true
+    },
+    {
+      "id": "model-top-paid-customer",
+      "question": "已付款订单成交额最高的客户是谁？",
+      "expected_rows": [
+        [
+          "Bob"
+        ]
+      ],
+      "ordered": true
+    },
+    {
+      "id": "model-count-active-customers",
+      "question": "活跃客户有多少个？",
+      "expected_rows": [
+        [
+          3
+        ]
+      ],
+      "ordered": true
+    },
+    {
+      "id": "model-average-paid-order",
+      "question": "已付款订单的平均订单金额是多少？",
+      "expected_rows": [
+        [
+          115.33333333333333
+        ]
+      ],
+      "ordered": true
+    },
+    {
+      "id": "model-paid-order-count-by-region",
+      "question": "按客户区域统计已付款订单数量。",
+      "expected_rows": [
+        [
+          "华东",
+          1
+        ],
+        [
+          "华北",
+          2
+        ]
+      ],
+      "ordered": false
+    },
+    {
+      "id": "model-product-quantity-by-category",
+      "question": "按商品分类统计订单明细中的销售数量。",
+      "expected_rows": [
+        [
+          "A",
+          6
+        ],
+        [
+          "B",
+          2
+        ]
+      ],
+      "ordered": false
+    },
+    {
+      "id": "model-customer-total-including-zero",
+      "question": "列出每位客户的全部订单金额，没有订单的客户也要显示为 0。",
+      "expected_rows": [
+        [
+          "Alice",
+          200.5
+        ],
+        [
+          "Bob",
+          225.5
+        ],
+        [
+          "Carol",
+          50.0
+        ],
+        [
+          "Dana",
+          0
+        ]
+      ],
+      "ordered": false
+    },
+    {
+      "id": "model-august-order-revenue",
+      "question": "2026 年 8 月的全部订单金额是多少？",
+      "expected_rows": [
+        [
+          426.0
+        ]
+      ],
+      "ordered": true
+    },
+    {
+      "id": "model-cancelled-order-customers",
+      "question": "哪些客户有已取消的订单？",
+      "expected_rows": [
+        [
+          "Carol"
+        ]
+      ],
+      "ordered": false
+    }
+  ]
+}

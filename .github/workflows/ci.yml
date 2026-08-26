@@ -1,0 +1,42 @@
+name: project-gate
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: project-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-python-312:
+    name: Windows 3.12 clean install
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+      - name: Bootstrap isolated environment
+        shell: cmd
+        run: .\scripts\bootstrap_dev.cmd
+      - name: Diagnose clean runner
+        shell: cmd
+        run: .\scripts\doctor.cmd
+      - name: Run repository and product gates
+        shell: pwsh
+        run: |
+          $env:DBAGENT_PYTHON = (Resolve-Path '.\.venv\Scripts\python.exe').Path
+          .\scripts\check_project.cmd
+      - name: Probe authenticated startup
+        shell: pwsh
+        run: |
+          $env:DBAGENT_PYTHON = (Resolve-Path '.\.venv\Scripts\python.exe').Path
+          .\scripts\run_python.cmd scripts\smoke_startup.py
