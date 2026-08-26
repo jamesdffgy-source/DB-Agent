@@ -1,0 +1,71 @@
+name: Bug report
+description: Report a reproducible DB-Agent defect using synthetic data.
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials, private databases, production SQL, model keys, or raw audit data. Security-sensitive issues belong in private vulnerability reporting.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.1.0 or a full commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: database
+    attributes:
+      label: Data source
+      options:
+        - SQLite
+        - CSV / XLSX import
+        - MySQL
+        - PostgreSQL
+        - No database / startup
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Windows edition, architecture, and Python version.
+      placeholder: Windows 11 x64, CPython 3.12.13
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Use a minimal synthetic database or the bundled demo.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Paste relevant output from scripts\doctor.cmd or a minimal traceback after removing private data.
+      render: shell
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Data-safety confirmation
+      options:
+        - label: I removed credentials, private records, production SQL, and model keys.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/jamesdffgy-source/DB-Agent/security/advisories/new
+    about: Report authentication, authorization, SQL-safety, credential, file-access, or audit-integrity issues privately.
+  - name: Installation and support guide
+    url: https://github.com/jamesdffgy-source/DB-Agent/blob/main/SUPPORT.md
+    about: Read the supported environment and diagnostic checklist before filing an issue.

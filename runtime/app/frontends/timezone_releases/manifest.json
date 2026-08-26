@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "active_release_id": "tzdata-2026.3-iana-2026c",
+  "rollback_release_id": null,
+  "releases": {
+    "tzdata-2026.3-iana-2026c": {
+      "tzdata_version": "2026.3",
+      "iana_version": "2026c",
+      "archive": "tzdata-2026.3-iana-2026c.zip",
+      "sha256": "1dfe52a0c9649d601bc0fd36a46064cd2fcae538905f126ee6e907f0ca07821d",
+      "zones_count": 598,
+      "probes": [
+        {
+          "id": "new-york-winter-boundary",
+          "zone": "America/New_York",
+          "utc": "2024-01-01T04:30:00Z",
+          "expected_date": "2023-12-31"
+        },
+        {
+          "id": "new-york-summer-boundary",
+          "zone": "America/New_York",
+          "utc": "2024-07-01T03:30:00Z",
+          "expected_date": "2024-06-30"
+        },
+        {
+          "id": "sydney-summer-boundary",
+          "zone": "Australia/Sydney",
+          "utc": "2024-01-01T13:30:00Z",
+          "expected_date": "2024-01-02"
+        },
+        {
+          "id": "sydney-winter-boundary",
+          "zone": "Australia/Sydney",
+          "utc": "2024-07-01T14:30:00Z",
+          "expected_date": "2024-07-02"
+        },
+        {
+          "id": "london-1970-continuous-bst",
+          "zone": "Europe/London",
+          "utc": "1970-12-31T23:30:00Z",
+          "expected_date": "1971-01-01"
+        },
+        {
+          "id": "apia-2011-dateline-shift",
+          "zone": "Pacific/Apia",
+          "utc": "2011-12-30T10:30:00Z",
+          "expected_date": "2011-12-31"
+        },
+        {
+          "id": "kathmandu-quarter-hour-offset",
+          "zone": "Asia/Kathmandu",
+          "utc": "2024-01-01T18:30:00Z",
+          "expected_date": "2024-01-02"
+        },
+        {
+          "id": "casablanca-ramadan-suspension",
+          "zone": "Africa/Casablanca",
+          "utc": "2024-03-10T23:30:00Z",
+          "expected_date": "2024-03-10"
+        }
+      ]
+    }
+  }
+}

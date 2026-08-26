@@ -1,0 +1,44 @@
+# Python caches and local test output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.venv/
+.cache/
+
+# Public benchmark downloads and raw model outputs (reproducible, not source).
+/benchmark_data/
+/benchmark_results/
+/dist/
+
+# The portable Python distribution is a local runtime artifact, not project source.
+/runtime/python/
+
+# Local credentials and machine-specific configuration
+/runtime/app/model_profiles.json
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+
+# Runtime databases, uploads, audit/session state, tokens, and logs
+/runtime/app/temp/
+/runtime/app/frontends/data/
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.log
+
+# Editor and operating-system metadata
+.idea/
+.vscode/
+.zcode/
+.DS_Store
+Thumbs.db
+
+# Unrelated local reference document; not part of DB-Agent.
+/*.docx
