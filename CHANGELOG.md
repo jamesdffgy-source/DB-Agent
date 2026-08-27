@@ -21,6 +21,13 @@ All notable user-facing changes are recorded here. Versions follow semantic vers
   `证据呢` now inherit the most recent complete user topic. Empty NL-to-SQL
   results can fall back to bounded cross-table evidence only when the original
   user language contains an exact entity.
+- Referential corrections such as `我的意思是他担任的工作` now skip earlier
+  dependent turns and recover the last complete named subject. A bare request
+  for a person's `工作` asks whether the user means role/employment or research
+  work/results instead of silently choosing one meaning.
+- Canonical identity/profile tables with explicit name and profile fields are
+  searched before audit summaries and other free-text mention tables, keeping
+  bounded evidence focused on authoritative role and biography fields.
 - Multi-part entity evidence questions no longer guess a cross-table join merely
   because they ask for status, known/unknown fields, and evidence sufficiency.
   Null and `unresolved` fields are reported as missing evidence rather than facts.

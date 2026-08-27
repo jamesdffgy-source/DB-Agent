@@ -16011,6 +16011,29 @@ class RagRetriever:
         fallback.sort(key=rank)
         return (declared_text + fallback)[:8]
 
+    @staticmethod
+    def _table_scan_rank(tbl) -> tuple[int, int, str]:
+        """Put canonical identity/profile tables before narrative mention tables."""
+        names = [column.name.casefold() for column in tbl.columns]
+        exact_name_fields = {
+            "name", "name_zh", "name_en", "full_name", "person_name",
+            "scholar_name", "advisor_name", "teacher_name", "employee_name",
+        }
+        profile_signals = (
+            "title", "position", "role", "job", "occupation", "unit",
+            "department", "affiliation", "short_bio", "profile", "bio",
+        )
+        if any(name in exact_name_fields for name in names):
+            bucket = 0
+        elif any("name" in name for name in names) \
+                and any(signal in name for name in names for signal in profile_signals):
+            bucket = 1
+        elif any("name" in name for name in names):
+            bucket = 2
+        else:
+            bucket = 3
+        return bucket, len(names), str(tbl.name).casefold()
+
     def _recall(self, keywords: List[str]) -> List[dict]:
         evidence: List[dict] = []
         conn = self.connector.connect()
@@ -16029,7 +16052,11 @@ class RagRetriever:
             cur = conn.cursor()
             budget = self.max_like_queries
             scan_plan = []
-            for tname, tbl in self.schema.tables.items():
+            ranked_tables = sorted(
+                self.schema.tables.items(),
+                key=lambda item: self._table_scan_rank(item[1]),
+            )
+            for tname, tbl in ranked_tables:
                 text_cols = self._text_scan_columns(tbl)
                 if not text_cols:
                     continue
@@ -16294,6 +16321,19 @@ class NaturalLanguageDatabasePlanner:
         r"单位|学校|职务|岗位|论文|项目|详情)?\s*(?:具体)?\s*"
         r"(?:是什么|做什么|怎么样|如何|怎么回事|为什么|有哪些|呢|吗)"
         r"[？?。！!]*$",
+        re.IGNORECASE,
+    )
+    _REFERENTIAL_FOLLOWUP_RE = re.compile(
+        r"^(?:(?:我的意思是|我是说|我指的是|我说的是|准确地说|"
+        r"具体来说|其实是|不是[，,]?我是说)\s*)?"
+        r"(?:那|那么)?\s*(?:他|她|它|这个人|这位(?:老师|教授|导师)|"
+        r"该(?:老师|教授|导师|人物))"
+        r"(?:的|担任|目前|现在|曾经|还|是|做|负责|在哪|有|呢|吗).{0,100}$",
+        re.IGNORECASE,
+    )
+    _AMBIGUOUS_PERSON_WORK_RE = re.compile(
+        r"^(?:请问|我想问|想了解)?\s*"
+        r"[\u4e00-\u9fff·]{2,12}(?:老师|教授|导师)?(?:的)?工作[？?。.]*$",
         re.IGNORECASE,
     )
     _DERIVED_METRIC_RE = re.compile(
@@ -16797,13 +16837,14 @@ class NaturalLanguageDatabasePlanner:
         """把对澄清问题的短回复并回原指令；完整的新请求保持原样。"""
         stripped = question.strip()
         contextual_followup = bool(self._CONTEXTUAL_FOLLOWUP_RE.fullmatch(stripped))
+        referential_followup = bool(self._REFERENTIAL_FOLLOWUP_RE.fullmatch(stripped))
         if (not history and not clarification) or len(question) > 200 \
                 or (self._CLEAR_NEW_READ_RE.search(stripped) and not contextual_followup) \
                 or self._COMPLETE_WRITE_RE.search(stripped) \
                 or re.search(
                     r"(目标表|对象名称|目标字段|筛选条件|修改后的值|新增内容|字段定义|结构变更定义|"
                     r"关联条件|指标口径|聚合字段|时间字段|时间范围|时间粒度|维度层级|业务日历|"
-                    r"布尔筛选作用域)\s*[:：]",
+                    r"布尔筛选作用域|工作含义)\s*[:：]",
                     question,
                 ):
             return question
@@ -16829,6 +16870,7 @@ class NaturalLanguageDatabasePlanner:
                 "business_calendar": "业务日历",
                 "dimension_level": "维度层级",
                 "boolean_filter_scope": "布尔筛选作用域",
+                "person_work_scope": "工作含义",
             }
             if original and missing in labels:
                 return f"{original.rstrip('？?。；;')}；{labels[missing]}：{question.strip()}"
@@ -16846,11 +16888,12 @@ class NaturalLanguageDatabasePlanner:
         previous_user = previous_users[0] if previous_users else ""
         if not last_assistant or not previous_user:
             return question
-        if contextual_followup and "请先补充" not in last_assistant:
+        if (contextual_followup or referential_followup) and "请先补充" not in last_assistant:
             context_anchor = next(
                 (
                     item for item in previous_users
                     if not self._CONTEXTUAL_FOLLOWUP_RE.fullmatch(item)
+                    and not self._REFERENTIAL_FOLLOWUP_RE.fullmatch(item)
                 ),
                 previous_user,
             )
@@ -17053,6 +17096,11 @@ class NaturalLanguageDatabasePlanner:
                 "这些表之间没有已声明的外键路径。请提供明确等值关联，"
                 "例如 orders.customer_id = customers.id。"
             )
+        elif plan.action in {"select", "retrieve"} \
+                and self._AMBIGUOUS_PERSON_WORK_RE.fullmatch(question.strip()) \
+                and not re.search(r"工作含义\s*[:：]", question):
+            missing = "person_work_scope"
+            prompt = "这里的‘工作’是指任职/职务，还是研究工作/成果？"
         elif plan.action in {"select", "analyze"} and self._DERIVED_METRIC_RE.search(question) \
                 and not self._has_defined_metric(question) and not self._has_metric_definition(question):
             missing = "metric_definition"
@@ -17136,6 +17184,17 @@ class NaturalLanguageDatabasePlanner:
                 }
                 for column in table.columns if not column.pk
             ][:8]
+        elif missing == "person_work_scope":
+            candidates = [
+                {
+                    "label": "任职/职务",
+                    "prompt": f"{question.rstrip('？?。；;')}；工作含义：任职与职务",
+                },
+                {
+                    "label": "研究工作/成果",
+                    "prompt": f"{question.rstrip('？?。；;')}；工作含义：研究工作与成果",
+                },
+            ]
         elif missing == "aggregation_field":
             candidates = [
                 {
@@ -17223,6 +17282,7 @@ class NaturalLanguageDatabasePlanner:
             "time_grain": "时间粒度",
             "dimension_level": "维度层级",
             "business_calendar": "业务日历口径",
+            "person_work_scope": "工作含义",
         }
         return {
             "missing": missing,

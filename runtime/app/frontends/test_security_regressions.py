@@ -13973,6 +13973,89 @@ class EntityRetrievalAndMemoryRegressionTests(unittest.TestCase):
         self.assertTrue(evidence_followup.startswith("肖仰华老师的工作是什么"))
         self.assertIn("追问：证据呢", evidence_followup)
 
+    def test_referential_correction_skips_prior_dependent_turns(self):
+        history = [
+            {"role": "user", "content": "肖仰华老师的工作"},
+            {"role": "assistant", "content": "查到了研究方向"},
+            {"role": "user", "content": "我的意思是他担任的工作"},
+            {"role": "assistant", "content": "未找到相关内容"},
+        ]
+        resolved = self.agent.operation_planner.resolve_followup(
+            "我的意思是他担任的工作",
+            history,
+        )
+        self.assertTrue(resolved.startswith("肖仰华老师的工作"))
+        self.assertIn("追问：我的意思是他担任的工作", resolved)
+
+    def test_bare_person_work_request_asks_which_meaning(self):
+        routed = dc.IntentResult(
+            intent="query", confidence=0.9, reasoning="询问特定人物的工作", source="model",
+        )
+        with mock.patch.object(self.agent.router, "classify", return_value=routed), \
+             mock.patch.object(
+                 self.agent.nl2sql,
+                 "answer",
+                 side_effect=AssertionError("工作含义澄清前不应执行 SQL"),
+             ):
+            answer = self.agent.ask("肖仰华老师的工作")
+        self.assertEqual(answer.kind, "clarification")
+        self.assertEqual(answer.clarification["missing"], "person_work_scope")
+        self.assertEqual(
+            [item["label"] for item in answer.clarification["candidates"]],
+            ["任职/职务", "研究工作/成果"],
+        )
+
+        merged = self.agent.operation_planner.resolve_followup(
+            "我的意思是他担任的工作",
+            [
+                {"role": "user", "content": "肖仰华老师的工作"},
+                {"role": "assistant", "content": answer.narrative},
+            ],
+            answer.clarification,
+        )
+        self.assertIn("肖仰华老师的工作", merged)
+        self.assertIn("工作含义：我的意思是他担任的工作", merged)
+
+    def test_canonical_profile_table_precedes_free_text_mentions(self):
+        path = Path(self.tmp.name) / "profile_priority.db"
+        with closing(sqlite3.connect(path)) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE activity_audits (id INTEGER PRIMARY KEY, audit_summary TEXT);
+                CREATE TABLE claims (id INTEGER PRIMARY KEY, claim_text TEXT);
+                CREATE TABLE scholars (
+                    id INTEGER PRIMARY KEY,
+                    name_zh TEXT,
+                    unit TEXT,
+                    title TEXT,
+                    advisor_status TEXT,
+                    short_bio TEXT
+                );
+                """
+            )
+            conn.execute(
+                "INSERT INTO activity_audits(audit_summary) VALUES (?)",
+                ("肖仰华的活动审计摘要",),
+            )
+            conn.execute(
+                "INSERT INTO claims(claim_text) VALUES (?)",
+                ("声明文本中提到肖仰华",),
+            )
+            conn.execute(
+                "INSERT INTO scholars(name_zh, unit, title, advisor_status, short_bio) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    "肖仰华", "计算与智能创新学院", "教授、博导", "博导",
+                    "复旦大学教授、博士生导师，实验室主任。",
+                ),
+            )
+            conn.commit()
+        agent = dc.DBQuillAgent(db_path=str(path), sample_rows=0)
+        evidence = agent.rag._recall(["肖仰华"])
+        self.assertTrue(evidence)
+        self.assertEqual(evidence[0]["table"], "scholars")
+        self.assertIn("教授、博导", evidence[0]["row"])
+
     def test_empty_sql_result_falls_back_only_to_exact_entity_evidence(self):
         empty = dc.DBAnswer(
             kind="query",
