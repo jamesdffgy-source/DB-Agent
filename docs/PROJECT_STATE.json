@@ -1,7 +1,7 @@
 {
   "schema_version": 5,
-  "recorded_at": "2026-08-27T14:13:50+08:00",
-  "source_fingerprint": "a3c001dddf78158263e30dccd064c362cedee406f8470ffa9911c5d0930660f6",
+  "recorded_at": "2026-08-27T14:19:54+08:00",
+  "source_fingerprint": "68fa157c1c701901cd32750c75e18c247f2cb80b4aadb1c247fd41d66a96bc4f",
   "controlled_file_count": 103,
   "python": "3.12.13",
   "test_command": "scripts/check_project.cmd",
