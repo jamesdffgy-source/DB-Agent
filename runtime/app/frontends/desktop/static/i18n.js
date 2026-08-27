@@ -251,7 +251,12 @@
     '应用采用合并模式：同名术语覆盖，不同名新增，完全一致的定义跳过。预检后目录若发生变化，需要重新预检。': 'Import merges the catalog: matching terms are replaced, new terms are added, and identical definitions are skipped. If the catalog changes after preflight, run preflight again.',
     '确认应用': 'Apply import',
     '新对话 · 选择数据库': 'New chat · Choose a database',
+    '上传': 'Upload',
     '上传数据': 'Upload data',
+    '文件过大（>200MB）': 'File is too large (>200 MB)',
+    '本地上传连接中断': 'The local upload connection was interrupted',
+    '上传已取消': 'Upload canceled',
+    '文件已上传（未接入数据库）': 'File uploaded, but no database was attached',
     '连接库': 'Connect database',
     '模型设置': 'Model settings',
     'API Key 只保存在本机 model_profiles.json，不写入源码、文档或审计记录': 'API keys are stored only in the local model_profiles.json file and never written to source, documentation, or audit records.',
@@ -338,7 +343,9 @@
     [/^(\d+)\s*张表$/u, (_, count) => `${count} tables`],
     [/^已开始新对话：(.+)$/u, (_, name) => `Started a new conversation: ${name}`],
     [/^已接入：(.+?)（(\d+) 张表）$/u, (_, name, count) => `Connected: ${name} (${count} tables)`],
-    [/^上传中：(.+)$/u, (_, name) => `Uploading: ${name}`],
+    [/^正在上传：(.+?)（(\d+)%）$/u, (_, name, percent) => `Uploading ${name} (${percent}%)`],
+    [/^正在上传：(.+)$/u, (_, name) => `Uploading ${name}`],
+    [/^正在检查数据库：(.+)$/u, (_, name) => `Inspecting database ${name}`],
     [/^已接入数据库：(.+?)（(\d+) 张表）$/u, (_, name, count) => `Database attached: ${name} (${count} tables)`],
     [/^连接成功（但模型列表中未找到该模型名）$/u, () => 'Connected, but the model name was not found in the model list.'],
     [/^连接成功，模型存在$/u, () => 'Connected; the model is available.'],
@@ -361,7 +368,7 @@
   function readInitialLocale() {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved === 'en' || saved === 'zh-CN') return saved;
-    return String(navigator.language || '').toLowerCase().startsWith('zh') ? 'zh-CN' : 'en';
+    return 'en';
   }
 
   function translateCore(source) {

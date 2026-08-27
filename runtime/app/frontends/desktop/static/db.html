@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -368,6 +368,15 @@
     backdrop-filter: blur(16px); box-shadow: 0 16px 40px rgba(0,0,0,.4);
   }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.has-progress { width: min(420px, calc(100vw - 48px)); padding: 13px 16px 14px; }
+  .toast-progress { height: 3px; margin-top: 10px; overflow: hidden; border-radius: 99px; background: rgba(255,255,255,.1); }
+  .toast-progress[hidden] { display: none; }
+  .toast-progress span { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--grad); transition: width .18s ease; }
+  .toast-progress.indeterminate span { width: 38%; animation: upload-indeterminate 1.15s ease-in-out infinite; }
+  @keyframes upload-indeterminate {
+    from { transform: translateX(-110%); }
+    to { transform: translateX(290%); }
+  }
 
   @media (max-width: 900px) {
     aside.sessions { display: none; }
@@ -464,9 +473,9 @@
   <header class="topbar">
     <div class="brand">
       <div class="brand-wordmark">DBQUILL</div>
-      <div class="locale-switch" data-i18n-control role="group" aria-label="语言">
-        <button type="button" data-locale="zh-CN" aria-pressed="true" title="已选择中文">中</button>
-        <button type="button" data-locale="en" aria-pressed="false" title="Switch to English">EN</button>
+      <div class="locale-switch" data-i18n-control role="group" aria-label="Language">
+        <button type="button" data-locale="zh-CN" aria-pressed="false" title="切换到中文">中</button>
+        <button type="button" data-locale="en" class="active" aria-pressed="true" title="English selected">EN</button>
       </div>
     </div>
     <nav class="nav-tabs" id="navTabs">
@@ -897,7 +906,10 @@
   </main>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite">
+  <div id="toastText"></div>
+  <div class="toast-progress" id="toastProgress" hidden><span id="toastProgressBar"></span></div>
+</div>
 <div class="ctx-menu" id="sessCtxMenu"></div>
 
 <div class="modal-mask" id="connectModal">
@@ -1075,7 +1087,7 @@
 </div>
 
 <script src="vendor/echarts.min.js"></script>
-<script src="i18n.js?v=20260827-1"></script>
+<script src="i18n.js?v=20260827-2"></script>
 <script>
 'use strict';
 /* ================= DBQuill 前端逻辑 ================= */
@@ -1130,10 +1142,23 @@ const _KIND_LABELS = { sqlite: 'SQLite', csv: 'CSV', excel: 'Excel', mysql: 'MyS
 function kindLabel(k) { return _KIND_LABELS[k] || String(k == null ? '' : k); }
 function toast(msg, ms = 2600) {
   const t = $('#toast');
-  t.textContent = uiT(msg);
+  $('#toastText').textContent = uiT(msg);
+  $('#toastProgress').hidden = true;
+  $('#toastProgress').classList.remove('indeterminate');
+  t.classList.remove('has-progress');
   t.classList.add('show');
   clearTimeout(t._h);
-  t._h = setTimeout(() => t.classList.remove('show'), ms);
+  if (ms > 0) t._h = setTimeout(() => t.classList.remove('show'), ms);
+}
+function uploadToast(msg, percent = null) {
+  const t = $('#toast');
+  const progress = $('#toastProgress');
+  $('#toastText').textContent = uiT(msg);
+  t.classList.add('show', 'has-progress');
+  clearTimeout(t._h);
+  progress.hidden = false;
+  progress.classList.toggle('indeterminate', percent == null);
+  if (percent != null) $('#toastProgressBar').style.width = Math.max(0, Math.min(100, percent)) + '%';
 }
 async function api(path, opts = {}) {
   const r = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
@@ -2613,28 +2638,49 @@ $('#fileInput').onchange = async e => {
     toast('旧版 Excel .xls 暂不支持，请先转换为 .xlsx 后再上传。');
     return;
   }
-  if (file.size > 200 * 1024 * 1024) { toast('文件过大（>200MB）'); return; }
-  toast('上传中：' + file.name);
-  const reader = new FileReader();
-  reader.onload = async () => {
-    try {
-      const j = await api('/upload', {
-        method: 'POST',
-        body: JSON.stringify({ name: file.name, dataUrl: reader.result, sid: state.sessionId || 'web' }),
-      });
-      if (j.db) {
-        toast('已接入数据库：' + j.db.name + '（' + j.db.tables.length + ' 张表）');
-        await loadDatabases();
-        chooseDatabase(j.db.id);
-      } else {
-        toast('文件已上传（非 sqlite，未接入）');
-      }
-    } catch (err) {
-      toast('上传失败：' + err.message);
-    }
+  if (file.size > 200 * 1024 * 1024) {
     e.target.value = '';
-  };
-  reader.readAsDataURL(file);
+    toast('文件过大（>200MB）');
+    return;
+  }
+  const form = new FormData();
+  form.append('file', file, file.name);
+  try {
+    const j = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/upload?sid=' + encodeURIComponent(state.sessionId || 'web'));
+      xhr.responseType = 'json';
+      xhr.upload.onprogress = event => {
+        const total = event.lengthComputable && event.total ? event.total : file.size;
+        const percent = total ? Math.round(event.loaded * 100 / total) : null;
+        uploadToast('正在上传：' + file.name + (percent == null ? '' : '（' + percent + '%）'), percent);
+      };
+      xhr.upload.onload = () => uploadToast('正在检查数据库：' + file.name);
+      xhr.onerror = () => reject(new Error('本地上传连接中断'));
+      xhr.onabort = () => reject(new Error('上传已取消'));
+      xhr.onload = () => {
+        const payload = xhr.response;
+        if (xhr.status < 200 || xhr.status >= 300 || (payload && payload.ok === false)) {
+          reject(new Error((payload && payload.error) || ('HTTP ' + xhr.status)));
+          return;
+        }
+        resolve(payload || {});
+      };
+      uploadToast('正在上传：' + file.name + '（0%）', 0);
+      xhr.send(form);
+    });
+    if (j.db) {
+      toast('已接入数据库：' + j.db.name + '（' + j.db.tables.length + ' 张表）');
+      await loadDatabases();
+      chooseDatabase(j.db.id);
+    } else {
+      toast('文件已上传（未接入数据库）');
+    }
+  } catch (err) {
+    toast('上传失败：' + err.message, 5200);
+  } finally {
+    e.target.value = '';
+  }
 };
 
 /* ---------- 连接远程库（顶栏按钮已移除；入口为选库浮层“连接库”） ---------- */

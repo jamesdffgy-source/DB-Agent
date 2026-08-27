@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import os
 import importlib.util
 import json
@@ -22,7 +21,7 @@ from decimal import Decimal
 from pathlib import Path
 from unittest import mock
 
-from aiohttp import web
+from aiohttp import FormData, web
 from aiohttp.test_utils import AioHTTPTestCase
 
 import requests
@@ -159,9 +158,12 @@ class RuntimeDependencyTests(unittest.TestCase):
         self.assertIn('class="locale-switch"', html)
         self.assertIn('data-locale="zh-CN"', html)
         self.assertIn('data-locale="en"', html)
-        self.assertIn('src="i18n.js?v=20260827-1"', html)
+        self.assertIn('<html lang="en">', html)
+        self.assertIn('data-locale="en" class="active"', html)
+        self.assertIn('src="i18n.js?v=20260827-2"', html)
         self.assertIn("window.DBQuillI18n.start()", html)
         self.assertIn("dbquill_locale", i18n)
+        self.assertIn("return 'en';", i18n)
         self.assertIn("MutationObserver", i18n)
         self.assertIn("Open-Source AI Database Agent", i18n)
         self.assertIn("'会话': 'Conversations'", i18n)
@@ -173,6 +175,17 @@ class RuntimeDependencyTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.assertIn('static_root.glob("*.js")', project_gate)
+
+    def test_desktop_upload_streams_without_renderer_base64_copies(self):
+        html_path = Path(__file__).parent / "desktop" / "static" / "db.html"
+        html = html_path.read_text(encoding="utf-8")
+        self.assertIn("new FormData()", html)
+        self.assertIn("new XMLHttpRequest()", html)
+        self.assertIn("xhr.upload.onprogress", html)
+        self.assertIn("正在检查数据库", html)
+        self.assertNotIn("new FileReader()", html)
+        self.assertNotIn("readAsDataURL", html)
+        self.assertNotIn("dataUrl: reader.result", html)
 
     def test_desktop_uses_single_owner_mode_without_role_management_ui(self):
         html_path = Path(__file__).parent / "desktop" / "static" / "db.html"
@@ -1215,14 +1228,15 @@ class LocalApiAuthTests(AioHTTPTestCase):
         self.assertNotIn("Access-Control-Allow-Origin", response.headers)
 
     async def test_legacy_xls_upload_is_rejected_before_file_write(self):
+        form = FormData()
+        form.add_field(
+            "file", b"not-an-xls", filename="legacy.XLS",
+            content_type="application/vnd.ms-excel",
+        )
         response = await self.client.post(
-            "/upload",
+            "/upload?sid=legacy-format",
             headers={"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN},
-            json={
-                "name": "legacy.XLS",
-                "dataUrl": "not-valid-base64",
-                "sid": "legacy-format",
-            },
+            data=form,
         )
         self.assertEqual(response.status, 415)
         payload = await response.json()
@@ -1233,23 +1247,21 @@ class LocalApiAuthTests(AioHTTPTestCase):
         )
         self.assertEqual(list(Path(self.upload_tmp.name).rglob("*")), [])
 
-    async def test_sqlite_upload_decodes_attaches_and_returns_tables(self):
+    async def test_sqlite_upload_streams_attaches_and_returns_tables(self):
         source_dir = tempfile.TemporaryDirectory()
         self.addCleanup(source_dir.cleanup)
         source_path = Path(source_dir.name) / "sample.sqlite"
         _make_db(source_path, rows=2)
 
+        form = FormData()
+        form.add_field(
+            "file", source_path.read_bytes(), filename="sample.sqlite",
+            content_type="application/octet-stream",
+        )
         response = await self.client.post(
-            "/upload",
+            "/upload?sid=successful-sqlite-upload",
             headers={"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN},
-            json={
-                "name": "sample.sqlite",
-                "dataUrl": (
-                    "data:application/octet-stream;base64,"
-                    + base64.b64encode(source_path.read_bytes()).decode("ascii")
-                ),
-                "sid": "successful-sqlite-upload",
-            },
+            data=form,
         )
         self.assertEqual(response.status, 200, await response.text())
         payload = await response.json()
@@ -1263,19 +1275,16 @@ class LocalApiAuthTests(AioHTTPTestCase):
         self.assertIn(uploaded_id, desktop_bridge._DB_AGENT_DBS)
         self.addCleanup(desktop_bridge._DB_AGENT_DBS.pop, uploaded_id, None)
 
-    async def test_csv_upload_decodes_converts_and_attaches_database(self):
+    async def test_csv_upload_streams_converts_and_attaches_database(self):
         csv_bytes = "id,name\n1,alpha\n2,beta\n".encode("utf-8")
+        form = FormData()
+        form.add_field(
+            "file", csv_bytes, filename="sample.csv", content_type="text/csv",
+        )
         response = await self.client.post(
-            "/upload",
+            "/upload?sid=successful-csv-upload",
             headers={"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN},
-            json={
-                "name": "sample.csv",
-                "dataUrl": (
-                    "data:text/csv;base64,"
-                    + base64.b64encode(csv_bytes).decode("ascii")
-                ),
-                "sid": "successful-csv-upload",
-            },
+            data=form,
         )
         self.assertEqual(response.status, 200, await response.text())
         payload = await response.json()
@@ -1292,6 +1301,27 @@ class LocalApiAuthTests(AioHTTPTestCase):
         uploaded_id = payload["db"]["id"]
         self.assertIn(uploaded_id, desktop_bridge._DB_AGENT_DBS)
         self.addCleanup(desktop_bridge._DB_AGENT_DBS.pop, uploaded_id, None)
+
+    async def test_streaming_upload_enforces_limit_and_removes_partial_file(self):
+        form = FormData()
+        form.add_field(
+            "file", b"0123456789abcdef", filename="oversized.sqlite",
+            content_type="application/octet-stream",
+        )
+        with mock.patch.object(desktop_bridge, "_UPLOAD_MAX_BYTES", 8):
+            response = await self.client.post(
+                "/upload?sid=oversized",
+                headers={"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN},
+                data=form,
+            )
+        self.assertEqual(response.status, 413, await response.text())
+        payload = await response.json()
+        self.assertFalse(payload["ok"])
+        self.assertIn("too large", payload["error"])
+        self.assertEqual(
+            [path for path in Path(self.upload_tmp.name).rglob("*") if path.is_file()],
+            [],
+        )
 
     async def test_cross_origin_request_is_rejected(self):
         response = await self.client.get(

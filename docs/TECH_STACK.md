@@ -41,7 +41,7 @@
 | `desktop_bridge.py` | aiohttp API、token/CORS、共享角色/个人凭据、数据库/表/字段/行范围中间件、上传、数据源、会话、图表、调度和静态页面。模型配置委托 `ModelProfileStore`，上传落盘委托 `UploadStorage`；bridge 不包含通用 Agent 会话或工具运行时。会话将模型用紧凑上下文与 UI-only 只读富快照分离；写表单、确认单和 DDL 均保持角色、范围、预览、审计和一次性确认边界。 |
 | `model_profiles.py` | 线程安全的本机 JSON 模型配置 CRUD、原子替换、字段校验和脱敏公开视图；在线连通性测试仅返回状态，不回显 API Key。运行文件 `runtime/app/model_profiles.json` 被 Git 忽略，仓库只提供无真实凭据的示例。 |
 | `model_gateway.py` | 项目专用 OpenAI-compatible `chat/completions` / `responses` 文本传输；支持流式/非流式解析、可重试状态、连接/读取/总截止时间、协作取消、代理/TLS 配置和线程级 token 统计。不提供工具注册、自治循环、通用会话或提供商故障转移编排。 |
-| `upload_storage.py` | 上传文件名清洗、会话桶哈希、随机落盘名和有界保留清理；bridge 只通过该边界写入上传目录。 |
+| `upload_storage.py` | 上传文件名清洗、会话桶哈希、随机落盘名、分块上传临时路径、完成后的原子发布和有界保留清理；bridge 只通过该边界写入上传目录。桌面使用 multipart 流式发送，不在渲染进程构造 Base64/JSON 全量副本。 |
 | `db_sessions_store.py` | SQLite 会话、待澄清状态和数据库+表/字段范围指纹持久化；`messages.display_payload` 保存最大 768 KiB 的 UI-only 只读结果快照，`get_history` 永远只返回紧凑 role/content，`get_session` 才恢复富结果。旧消息表在线新增该列，旧会话迁移为 `all`，表级 v1 指纹保持兼容，显式事务关闭连接 |
 | `db_semantic_store.py` | 独立 SQLite 语义目录；按稳定数据源标识保存八类定义，普通指标过滤、比率公式、业务日历、维度层级/固定过滤和时间默认粒度以分类型结构化 JSON 持久化；兼容旧维度层级载荷，并提供内容版本快照和单事务批量合并 |
 | `db_audit_store.py` | 独立 SQLite 追加式操作审计账本；受控详情字段白名单（建表只新增字段数量，不记字段名/默认值原文）、不可逆指纹、连续序号与 SHA-256 前向哈希链、查询/校验/脱敏导出、批准/终态未决对账、追加式管理员处置、30–3650 天非破坏性保留评估、原子外部前缀归档、绑定文件 SHA-256/head hash 的本地/外部备份与离线恢复、配置式文件系统目标/能力探测/同步状态/最新包复验、本地/外部隔离演练、DB/WAL/SHM 现场评估、严格损坏证据包和带原现场自动回滚的异常恢复，以及可移出的历史前缀锚点；不提供历史更新/删除 API |

@@ -7,7 +7,7 @@
 """
 from __future__ import annotations
 
-import asyncio, base64, contextlib, contextvars, hashlib, hmac, json, math, os, re, secrets, sys
+import asyncio, contextlib, contextvars, hashlib, hmac, json, math, os, re, secrets, sys
 import threading, time, traceback, uuid
 from datetime import datetime
 from pathlib import Path
@@ -707,45 +707,94 @@ _uploads = UploadStorage(Path(DEFAULT_APP_ROOT) / "temp" / "desktop_uploads")
 with contextlib.suppress(OSError):
     _uploads.sweep(30)
 
+_UPLOAD_MAX_BYTES = 200 * 1024 * 1024
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+async def _receive_multipart_upload(request):
+    """Stream one multipart file to a temporary path, then publish atomically."""
+    if not request.content_type.startswith("multipart/"):
+        raise web.HTTPUnsupportedMediaType(
+            text=json.dumps({"ok": False, "error": "multipart/form-data upload required"}),
+            content_type="application/json",
+        )
+
+    reader = await request.multipart()
+    session_id = str(request.query.get("sid") or "")
+    received = None
+
+    while True:
+        part = await reader.next()
+        if part is None:
+            break
+        if part.name == "sid" and received is None:
+            session_id = (await part.text())[:512]
+            continue
+        if part.name != "file":
+            while await part.read_chunk(_UPLOAD_CHUNK_BYTES):
+                pass
+            continue
+        if received is not None:
+            raise UploadStorageError("only one file may be uploaded at a time")
+
+        original_name = str(part.filename or "file")
+        if Path(original_name).suffix.lower() == ".xls":
+            raise web.HTTPUnsupportedMediaType(
+                text=json.dumps(
+                    {
+                        "ok": False,
+                        "error": "旧版 Excel .xls 暂不支持，请先转换为 .xlsx 后再上传。",
+                    },
+                    ensure_ascii=False,
+                ),
+                content_type="application/json",
+            )
+
+        destination, staging, safe_name = _uploads.allocate(session_id, original_name)
+        size = 0
+        try:
+            with staging.open("xb") as target:
+                while True:
+                    chunk = await part.read_chunk(_UPLOAD_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > _UPLOAD_MAX_BYTES:
+                        raise UploadStorageError("file too large (>200MB)")
+                    target.write(chunk)
+            if size == 0:
+                raise UploadStorageError("empty file")
+            _uploads.commit(staging, destination)
+        except Exception:
+            _uploads.discard(staging)
+            raise
+        received = (destination, safe_name, original_name)
+
+    if received is None:
+        raise UploadStorageError("missing file")
+    return received
+
 
 async def upload_handler(request):
-    """Save a file uploaded by the web client and return its absolute path.
-    Body: {name: "<original filename>", dataUrl: "data:<mime>;base64,<...>", sid: "<session id>"}
+    """Stream a multipart upload to local storage and return its absolute path.
+
     Files are grouped per session under desktop_uploads/<sid>/ so deleting a
     session can purge its attachments. Missing sid falls back to a _misc bucket.
     Returns: {ok: true, path: "<abs path>"}
     """
     try:
-        data = await request.json()
-        if not isinstance(data, dict):
-            data = {}
+        fpath, safe_name, original_name = await _receive_multipart_upload(request)
     except web.HTTPRequestEntityTooLarge:
-        return json_ok({"ok": False, "error": "file too large for bridge body limit"})
-    except Exception as e:
-        return json_ok({"ok": False, "error": f"invalid request: {e}"})
-    original_name = str(data.get("name") or "file")
-    ext = Path(original_name).suffix.lower()
-    if ext == ".xls":
-        return json_ok(
-            {
-                "ok": False,
-                "error": "旧版 Excel .xls 暂不支持，请先转换为 .xlsx 后再上传。",
-            },
-            status=415,
-        )
-    data_url = data.get("dataUrl") or ""
-    if "," in data_url:
-        b64 = data_url.split(",", 1)[1]
-    else:
-        b64 = data_url
-    try:
-        blob = base64.b64decode(b64)
-    except Exception as e:
-        return json_ok({"ok": False, "error": f"decode failed: {e}"})
-    try:
-        fpath, safe_name = _uploads.store(data.get("sid") or "", original_name, blob)
+        return json_ok({"ok": False, "error": "file too large (>200MB)"}, status=413)
+    except web.HTTPException:
+        raise
     except UploadStorageError as exc:
-        return json_ok({"ok": False, "error": str(exc)})
+        status = 413 if "too large" in str(exc).lower() else 400
+        return json_ok({"ok": False, "error": str(exc)}, status=status)
+    except Exception as exc:
+        return json_ok({"ok": False, "error": f"upload failed: {exc}"}, status=400)
+
+    ext = Path(original_name).suffix.lower()
     # 上传的是 sqlite → 自动 attach 到 /db/*（供 DBQuill 直接对话）；csv → 先转 sqlite 再 attach
     auto_db = None
     if ext == ".csv":

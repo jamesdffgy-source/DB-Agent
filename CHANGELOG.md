@@ -7,9 +7,16 @@ All notable user-facing changes are recorded here. Versions follow semantic vers
 ### Added
 
 - Added a compact Chinese/English selector beside the DBQuill wordmark. The
-  interface locale follows the saved local preference, falls back to the system
-  language, and translates static and dynamically rendered application controls
+  interface locale follows the saved local preference, defaults to English on
+  first launch, and translates static and dynamically rendered application controls
   without sending interface text to a translation service.
+- Added live upload progress with a separate database-inspection phase.
+
+### Fixed
+
+- Replaced renderer-side Base64/JSON uploads with bounded multipart streaming.
+  Large databases no longer require several full in-memory copies in the desktop
+  page; incomplete and over-limit uploads are discarded before publication.
 
 ## 0.2.0 - 2026-08-27
 

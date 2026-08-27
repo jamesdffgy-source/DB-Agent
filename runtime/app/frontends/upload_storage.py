@@ -34,12 +34,37 @@ class UploadStorage:
     def store(self, session_id: str, original_name: str, content: bytes) -> tuple[Path, str]:
         if not content:
             raise UploadStorageError("empty file")
+        destination, _staging, safe_name = self.allocate(session_id, original_name)
+        destination.write_bytes(content)
+        return destination, safe_name
+
+    def allocate(self, session_id: str, original_name: str) -> tuple[Path, Path, str]:
+        """Reserve final and temporary paths for a streamed upload.
+
+        The caller writes only to ``staging`` and calls :meth:`commit` after the
+        complete body has arrived. This keeps partially uploaded files out of
+        the normal upload namespace.
+        """
         safe_name = self._display_name(original_name)
         bucket = self.root / self._bucket_name(session_id)
         bucket.mkdir(parents=True, exist_ok=True)
         destination = bucket / f"{secrets.token_hex(8)}-{safe_name}"
-        destination.write_bytes(content)
-        return destination.resolve(), safe_name
+        staging = bucket / f".{destination.name}.{secrets.token_hex(4)}.part"
+        return destination.resolve(), staging.resolve(), safe_name
+
+    @staticmethod
+    def commit(staging: Path, destination: Path) -> Path:
+        staging = Path(staging).resolve()
+        destination = Path(destination).resolve()
+        os.replace(staging, destination)
+        return destination
+
+    @staticmethod
+    def discard(staging: Path) -> None:
+        try:
+            Path(staging).unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def sweep(self, retention_days: int = 30) -> dict[str, int]:
         cutoff = time.time() - max(1, int(retention_days)) * 86_400
