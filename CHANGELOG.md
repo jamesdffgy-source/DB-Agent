@@ -17,6 +17,9 @@ All notable user-facing changes are recorded here. Versions follow semantic vers
 - Replaced renderer-side Base64/JSON uploads with bounded multipart streaming.
   Large databases no longer require several full in-memory copies in the desktop
   page; incomplete and over-limit uploads are discarded before publication.
+- Added a launcher/bridge protocol handshake so an updated desktop page cannot
+  reuse an older JSON-only bridge. UTF-8 multipart filenames are decoded before
+  safe-name normalization, preserving readable non-ASCII database names.
 
 ## 0.2.0 - 2026-08-27
 

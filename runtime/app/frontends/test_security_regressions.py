@@ -160,7 +160,7 @@ class RuntimeDependencyTests(unittest.TestCase):
         self.assertIn('data-locale="en"', html)
         self.assertIn('<html lang="en">', html)
         self.assertIn('data-locale="en" class="active"', html)
-        self.assertIn('src="i18n.js?v=20260827-2"', html)
+        self.assertIn('src="i18n.js?v=20260827-3"', html)
         self.assertIn("window.DBQuillI18n.start()", html)
         self.assertIn("dbquill_locale", i18n)
         self.assertIn("return 'en';", i18n)
@@ -183,6 +183,8 @@ class RuntimeDependencyTests(unittest.TestCase):
         self.assertIn("new XMLHttpRequest()", html)
         self.assertIn("xhr.upload.onprogress", html)
         self.assertIn("正在检查数据库", html)
+        self.assertIn("bridgeStatus.uploadProtocol !== 'multipart-v1'", html)
+        self.assertIn("本地服务版本过旧", html)
         self.assertNotIn("new FileReader()", html)
         self.assertNotIn("readAsDataURL", html)
         self.assertNotIn("dataUrl: reader.result", html)
@@ -1224,7 +1226,10 @@ class LocalApiAuthTests(AioHTTPTestCase):
             headers={"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN},
         )
         self.assertEqual(response.status, 200)
-        self.assertTrue((await response.json())["authRequired"])
+        payload = await response.json()
+        self.assertTrue(payload["authRequired"])
+        self.assertEqual(payload["bridgeProtocol"], desktop_bridge.BRIDGE_PROTOCOL_VERSION)
+        self.assertEqual(payload["uploadProtocol"], "multipart-v1")
         self.assertNotIn("Access-Control-Allow-Origin", response.headers)
 
     async def test_legacy_xls_upload_is_rejected_before_file_write(self):
@@ -1255,7 +1260,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
 
         form = FormData()
         form.add_field(
-            "file", source_path.read_bytes(), filename="sample.sqlite",
+            "file", source_path.read_bytes(), filename="中文数据.sqlite",
             content_type="application/octet-stream",
         )
         response = await self.client.post(
@@ -1267,6 +1272,7 @@ class LocalApiAuthTests(AioHTTPTestCase):
         payload = await response.json()
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["db"]["kind"], "sqlite")
+        self.assertEqual(payload["db"]["name"], "中文数据.sqlite")
         self.assertEqual(payload["db"]["tables"], ["items"])
         uploaded_path = Path(payload["path"])
         self.assertTrue(uploaded_path.is_file())
@@ -13887,6 +13893,31 @@ class LauncherPortSelectionTests(unittest.TestCase):
         with mock.patch.object(self.launcher, "_status_ok", side_effect=lambda port: port == 14172), \
              mock.patch.object(self.launcher, "_port_occupied", return_value=True):
             self.assertEqual(self.launcher._select_bridge_port(), (14172, True))
+
+    def test_status_reuse_requires_matching_transport_protocol(self):
+        compatible = {
+            "ok": True,
+            "authRequired": True,
+            "appRoot": self.launcher.APP_ROOT,
+            "bridgeProtocol": self.launcher.EXPECTED_BRIDGE_PROTOCOL,
+            "uploadProtocol": self.launcher.EXPECTED_UPLOAD_PROTOCOL,
+        }
+        with mock.patch.object(self.launcher, "_status_info", return_value=compatible):
+            self.assertTrue(self.launcher._status_ok(14169))
+        incompatible = dict(compatible)
+        incompatible.pop("uploadProtocol")
+        with mock.patch.object(self.launcher, "_status_info", return_value=incompatible):
+            self.assertFalse(self.launcher._status_ok(14169))
+
+    def test_launcher_and_bridge_protocol_constants_match(self):
+        self.assertEqual(
+            self.launcher.EXPECTED_BRIDGE_PROTOCOL,
+            desktop_bridge.BRIDGE_PROTOCOL_VERSION,
+        )
+        self.assertEqual(
+            self.launcher.EXPECTED_UPLOAD_PROTOCOL,
+            desktop_bridge.UPLOAD_PROTOCOL,
+        )
 
     def test_uses_free_fallback_when_default_belongs_to_another_project(self):
         occupied = {14169, 14170}

@@ -2,7 +2,7 @@
 """
 DBQuill 桌面前端启动器
 双击运行：打开独立桌面窗口承载 DBQuill（http://127.0.0.1:14169/db），无需浏览器。
-若 bridge(14169) 未运行，自动以隐藏窗口启动；窗口关闭后 bridge 保留（下次秒开）。
+若没有协议兼容的 bridge，自动在可用端口以隐藏窗口启动；旧版本 bridge 不会被新前端复用。
 """
 import os
 import sys
@@ -21,6 +21,8 @@ APP_ICON = os.path.join(APP_ROOT, "frontends", "desktop", "static", "dbquill-ico
 PREFERRED_BRIDGE_PORT = 14169
 FALLBACK_BRIDGE_PORTS = range(14170, 14180)
 TOKEN_FILE = os.path.join(APP_ROOT, "temp", "bridge.token")
+EXPECTED_BRIDGE_PROTOCOL = 2
+EXPECTED_UPLOAD_PROTOCOL = "multipart-v1"
 
 
 def _select_python():
@@ -91,6 +93,8 @@ def _status_ok(port):
     return (
         bool(st.get("ok"))
         and st.get("authRequired") is True
+        and st.get("bridgeProtocol") == EXPECTED_BRIDGE_PROTOCOL
+        and st.get("uploadProtocol") == EXPECTED_UPLOAD_PROTOCOL
         and os.path.normcase(os.path.normpath(st.get("appRoot", ""))) == os.path.normcase(APP_ROOT)
     )
 

@@ -1087,7 +1087,7 @@
 </div>
 
 <script src="vendor/echarts.min.js"></script>
-<script src="i18n.js?v=20260827-2"></script>
+<script src="i18n.js?v=20260827-3"></script>
 <script>
 'use strict';
 /* ================= DBQuill 前端逻辑 ================= */
@@ -2646,6 +2646,10 @@ $('#fileInput').onchange = async e => {
   const form = new FormData();
   form.append('file', file, file.name);
   try {
+    const bridgeStatus = await api('/status');
+    if (bridgeStatus.uploadProtocol !== 'multipart-v1') {
+      throw new Error('本地服务版本过旧，请完全退出并重新启动 DBQuill');
+    }
     const j = await new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', '/upload?sid=' + encodeURIComponent(state.sessionId || 'web'));

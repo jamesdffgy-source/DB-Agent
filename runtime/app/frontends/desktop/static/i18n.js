@@ -255,6 +255,7 @@
     '上传数据': 'Upload data',
     '文件过大（>200MB）': 'File is too large (>200 MB)',
     '本地上传连接中断': 'The local upload connection was interrupted',
+    '本地服务版本过旧，请完全退出并重新启动 DBQuill': 'The local service is outdated. Fully exit and restart DBQuill.',
     '上传已取消': 'Upload canceled',
     '文件已上传（未接入数据库）': 'File uploaded, but no database was attached',
     '连接库': 'Connect database',

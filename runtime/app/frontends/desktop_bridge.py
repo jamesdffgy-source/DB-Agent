@@ -12,6 +12,7 @@ import threading, time, traceback, uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
+from urllib.parse import unquote
 from aiohttp import web, WSMsgType
 import sqlite3
 
@@ -49,6 +50,8 @@ from model_profiles import ModelProfileStore
 from upload_storage import UploadStorage, UploadStorageError
 
 APP_DIR = Path(__file__).resolve().parent
+BRIDGE_PROTOCOL_VERSION = 2
+UPLOAD_PROTOCOL = "multipart-v1"
 
 
 def find_app_root() -> Path:
@@ -218,6 +221,8 @@ async def ws_handler(request):
     await ws.send_str(json.dumps({
         "type": "bridge-ready",
         "appRoot": str(manager.app_root),
+        "bridgeProtocol": BRIDGE_PROTOCOL_VERSION,
+        "uploadProtocol": UPLOAD_PROTOCOL,
         "http": True,
         "wsEventsOnly": True,
     }, ensure_ascii=False))
@@ -388,6 +393,8 @@ async def status_handler(request):
         "running": True,
         "ready": True,
         "authRequired": True,
+        "bridgeProtocol": BRIDGE_PROTOCOL_VERSION,
+        "uploadProtocol": UPLOAD_PROTOCOL,
         "ws": "/ws",
         "transport": {"http": True, "wsLivenessOnly": True},
         "access": {
@@ -737,7 +744,11 @@ async def _receive_multipart_upload(request):
         if received is not None:
             raise UploadStorageError("only one file may be uploaded at a time")
 
-        original_name = str(part.filename or "file")
+        encoded_name = str(part.filename or "file")
+        try:
+            original_name = unquote(encoded_name, encoding="utf-8", errors="strict")
+        except UnicodeDecodeError:
+            original_name = encoded_name
         if Path(original_name).suffix.lower() == ".xls":
             raise web.HTTPUnsupportedMediaType(
                 text=json.dumps(

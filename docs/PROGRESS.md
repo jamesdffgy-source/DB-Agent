@@ -2258,3 +2258,15 @@
   使用现有 51,863,552 字节 SQLite 通过真实本地 HTTP 上传并接入 9 张表，耗时 0.322 秒（153.53 MiB/s）；
   bridge 工作集由 57.9 MiB 峰至 58.8 MiB，观测增量 0.9 MiB。上述速度依赖当前磁盘，仅作为本轮回归证据。
   终检同时移除 `responseType=json` 分支中不合法的 `responseText` 回退，避免异常响应使上传 Promise 悬挂。
+
+## 2026-08-27 11:55 +08:00
+
+- 用户重启桌面窗口后上传仍返回 `invalid UTF-8`。现场确认 11:47 打开的新 WebView 复用了 10:39 启动的旧
+  bridge：新前端发送 multipart，旧后端执行 `request.json()`，在数据库字节 `0xff` 处失败。用 8 字节二进制
+  multipart 对旧 14175 端口稳定复现相同 `invalid start byte`，证明不是 SQLite 内容或字符集损坏。
+- bridge 状态和 WebSocket 就绪消息新增 `bridgeProtocol=2`、`uploadProtocol=multipart-v1`；launcher 只有协议、
+  app root 和鉴权都匹配才复用既有进程，否则启动兼容 bridge。前端上传前也执行协议预检，错配时提示完整
+  重启，不再把二进制发送给 JSON-only 服务。
+- 中文文件名回归发现 aiohttp multipart 将文件名表示为 UTF-8 百分号编码；现以严格 UTF-8 解码后再进入既有
+  文件名清洗，非法编码回退原始文本。11 项定向回归通过；新 bridge 用 51,863,552 字节数据库和中文文件名
+  实测 HTTP 200、名称完整、SQLite 接入 9 张表、耗时 0.253 秒。测试上传副本已删除，原始数据库未修改。
