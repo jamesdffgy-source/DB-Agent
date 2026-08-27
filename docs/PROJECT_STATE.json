@@ -1,11 +1,11 @@
 {
   "schema_version": 5,
-  "recorded_at": "2026-08-27T13:03:07+08:00",
-  "source_fingerprint": "ea28a88e1d9c0b6b783f358cb9c9a6b4dd5a1e4850d57dbc32954a66543d28af",
+  "recorded_at": "2026-08-27T14:13:50+08:00",
+  "source_fingerprint": "a3c001dddf78158263e30dccd064c362cedee406f8470ffa9911c5d0930660f6",
   "controlled_file_count": 103,
   "python": "3.12.13",
   "test_command": "scripts/check_project.cmd",
-  "tests_passed": 433,
+  "tests_passed": 445,
   "evaluation": {
     "suite_version": "2026.08.17-v23",
     "offline_passed": 134,
@@ -52,5 +52,5 @@
     "credential_findings": 0,
     "redistributed_assets_verified": 2
   },
-  "summary": "Resolve referential corrections, clarify person-work semantics, and prioritize canonical profiles"
+  "summary": "Add bounded read exploration and grounded entity replanning"
 }

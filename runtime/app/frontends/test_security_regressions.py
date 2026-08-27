@@ -11,6 +11,7 @@ import sqlite3
 import sys
 import tempfile
 import threading
+import time
 import types
 import unittest
 import zipfile
@@ -4628,6 +4629,445 @@ class NaturalLanguageDatabaseTests(unittest.TestCase):
             [call.kwargs["allowed_tables"] for call in query.call_args_list],
             [["events"], ["items"], ["orders"]],
         )
+
+
+class BoundedReadExplorerTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "people.db"
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE scholars (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT,
+                    title TEXT,
+                    short_bio TEXT
+                );
+                CREATE TABLE audit_mentions (
+                    id INTEGER PRIMARY KEY,
+                    subject TEXT,
+                    note TEXT
+                );
+                INSERT INTO scholars(name, title, short_bio) VALUES (
+                    '肖仰华', '教授、博导',
+                    '复旦大学教授、博士生导师，上海市数据科学重点实验室主任'
+                );
+                INSERT INTO audit_mentions(subject, note) VALUES ('肖仰华', '导入记录');
+                """
+            )
+            conn.commit()
+        self.agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=2)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_observe_replan_loop_can_inspect_retrieve_and_finish(self):
+        evidence = [{
+            "table": "scholars",
+            "columns": ["id", "name", "title", "short_bio"],
+            "row": ["1", "肖仰华", "教授、博导", "上海市数据科学重点实验室主任"],
+            "matched": "肖仰华",
+        }]
+        actions = [
+            {
+                "action": "inspect_schema", "tables": ["scholars"],
+                "reason_code": "schema_uncertain",
+            },
+            {
+                "action": "retrieve", "tables": [],
+                "question": "检索肖仰华的职称、导师身份和现任职务",
+                "reason_code": "evidence_missing",
+            },
+            {
+                "action": "finish", "answer_zh": "肖仰华是教授、博导，并担任上海市数据科学重点实验室主任。",
+                "reason_code": "answer_grounded",
+            },
+        ]
+        with mock.patch.object(
+            self.agent.read_explorer, "_next_action", side_effect=actions,
+        ) as planner, mock.patch.object(
+            self.agent.rag,
+            "recall_evidence",
+            return_value=evidence,
+        ) as retrieve:
+            answer = self.agent.read_explorer.explore(
+                "肖仰华的工作是什么？",
+                None,
+                dc.DBAnswer(kind="retrieve", narrative="未找到。", evidence=[]),
+            )
+
+        self.assertIsNotNone(answer)
+        self.assertEqual(planner.call_count, 3)
+        retrieve.assert_called_once()
+        self.assertIn("明确实体：“肖仰华”", retrieve.call_args.args[0])
+        self.assertEqual(answer.kind, "retrieve")
+        self.assertIn("实验室主任", answer.narrative)
+        self.assertEqual(answer.evidence, evidence)
+        actions_seen = [
+            step.get("action") for step in answer.steps
+            if step.get("planner_step")
+        ]
+        self.assertEqual(actions_seen, ["inspect_schema", "retrieve", "finish"])
+
+    def test_refined_question_cannot_drop_explicit_entity(self):
+        actions = [
+            {
+                "action": "retrieve", "question": "检索他的职务",
+                "reason_code": "evidence_missing",
+            },
+            {"action": "stop", "reason_code": "cannot_progress"},
+        ]
+        with mock.patch.object(
+            self.agent.read_explorer, "_next_action", side_effect=actions,
+        ), mock.patch.object(self.agent.rag, "answer") as retrieve:
+            answer = self.agent.read_explorer.explore(
+                "肖仰华的资料是什么？请找他的职务。",
+                None,
+                dc.DBAnswer(kind="retrieve", narrative="证据不足。", evidence=[]),
+            )
+
+        self.assertIsNone(answer)
+        retrieve.assert_not_called()
+
+    def test_unknown_table_and_raw_sql_actions_are_rejected_locally(self):
+        actions = [
+            {
+                "action": "inspect_schema", "tables": ["invented_people"],
+                "reason_code": "schema_uncertain",
+            },
+            {
+                "action": "query", "question": "DELETE FROM scholars",
+                "reason_code": "query_empty",
+            },
+            {"action": "stop", "reason_code": "cannot_progress"},
+        ]
+        with mock.patch.object(
+            self.agent.read_explorer, "_next_action", side_effect=actions,
+        ), mock.patch.object(self.agent.nl2sql, "answer") as query:
+            answer = self.agent.read_explorer.explore(
+                "请查找人物资料",
+                None,
+                dc.DBAnswer(kind="retrieve", narrative="未找到。", evidence=[]),
+            )
+
+        self.assertIsNone(answer)
+        query.assert_not_called()
+
+    def test_planned_table_mismatch_triggers_model_entity_rebinding(self):
+        question = "肖仰华担任哪些职务？"
+        self.assertEqual(self.agent.rag._entity_terms(question), [])
+        wrong_evidence = dc.DBAnswer(
+            kind="retrieve", narrative="只找到了编委记录。",
+            evidence=[{
+                "table": "audit_mentions", "columns": ["subject", "note"],
+                "row": ["肖仰华", "导入记录"], "matched": "肖仰华",
+            }],
+        )
+        operation = dc.DatabaseOperationPlan(
+            mode="read", intent="retrieve", target_tables=["scholars"],
+        )
+        self.assertTrue(self.agent.read_explorer.should_explore(
+            question,
+            dc.IntentResult(intent="retrieve", confidence=0.9, source="model"),
+            wrong_evidence,
+            operation=operation,
+        ))
+        actions = [
+            {
+                "action": "retrieve", "entities": ["肖仰华"],
+                "question": "肖仰华担任哪些具体职务？",
+                "reason_code": "evidence_missing",
+            },
+            {
+                "action": "finish", "answer_zh": "肖仰华是教授、博导。",
+                "reason_code": "answer_grounded",
+            },
+        ]
+        grounded = dc.DBAnswer(
+            kind="retrieve", narrative="肖仰华是教授、博导。",
+            evidence=[{
+                "table": "scholars", "columns": ["name", "title"],
+                "row": ["肖仰华", "教授、博导"], "matched": "肖仰华",
+            }],
+        )
+        with mock.patch.object(
+            self.agent.read_explorer, "_next_action", side_effect=actions,
+        ), mock.patch.object(
+            self.agent.rag, "recall_evidence", return_value=grounded.evidence,
+        ) as retrieve:
+            answer = self.agent.read_explorer.explore(
+                question, None, wrong_evidence, target_tables=["scholars"],
+            )
+
+        self.assertIsNotNone(answer)
+        self.assertIn("明确实体：“肖仰华”", retrieve.call_args.args[0])
+        self.assertTrue(any(
+            item.get("table") == "scholars" for item in answer.evidence
+        ))
+        invented = self.agent.read_explorer._normalize_action({
+            "action": "retrieve", "entities": ["李四"],
+            "question": "检索李四的职务",
+        })
+        self.assertEqual(
+            self.agent.read_explorer._validate_action(
+                invented, [], original_question=question,
+            ),
+            "entity_not_grounded",
+        )
+
+    def test_router_entities_and_read_target_are_schema_and_source_grounded(self):
+        payload = {
+            "intent": "query", "interaction": "auto",
+            "target_table": "scholars",
+            "entities": ["肖仰华", "李四", "肖仰华"],
+            "confidence": 0.96,
+            "reasoning": "查询明确学者的职务",
+        }
+        question = "肖仰华担任哪些职务？"
+        with mock.patch.object(dc, "_llm_ask_json", return_value=payload):
+            routed = self.agent.router.classify(
+                question, self.agent.schema.compact(),
+            )
+        self.assertEqual(routed.entities, ["肖仰华"])
+        operation = self.agent.operation_planner.from_intent(question, routed)
+        self.assertEqual(operation.target_tables, ["scholars"])
+        narrow = dc.DBAnswer(
+            kind="query", narrative="已查询 title",
+            sql="SELECT title FROM scholars", columns=["title"], rows=[["教授、博导"]],
+        )
+        self.assertTrue(self.agent.read_explorer.should_explore(
+            question, routed, narrow, operation=operation,
+        ))
+
+    def test_database_identity_grounding_repairs_missing_router_entities(self):
+        question = "肖仰华担任哪些职务？"
+        keywords = self.agent.rag._keywords(question)
+        self.assertIn("肖仰华", keywords)
+        evidence = self.agent.rag.recall_evidence(question)
+        grounded = self.agent.rag.ground_entity_context(question, evidence)
+        self.assertEqual(grounded["entities"], ["肖仰华"])
+        self.assertEqual(grounded["tables"], ["scholars"])
+
+        routed = dc.IntentResult(
+            intent="query", confidence=0.9, reasoning="查询职务", source="model",
+        )
+        narrow = dc.DBAnswer(
+            kind="query", narrative="只查到 title",
+            sql="SELECT title FROM scholars WHERE name='肖仰华'",
+            columns=["title"], rows=[["教授、博导"]],
+        )
+        actions = [
+            {
+                "action": "retrieve", "entities": ["肖仰华"],
+                "question": "肖仰华担任哪些职务？",
+                "reason_code": "evidence_missing",
+            },
+            {
+                "action": "finish",
+                "answer_zh": "肖仰华是教授、博导，并担任上海市数据科学重点实验室主任。",
+                "reason_code": "answer_grounded",
+            },
+        ]
+        with mock.patch.object(self.agent.router, "classify", return_value=routed), \
+             mock.patch.object(self.agent.nl2sql, "answer", return_value=narrow), \
+             mock.patch.object(self.agent.read_explorer, "_next_action", side_effect=actions):
+            answer = self.agent.ask(question)
+
+        self.assertIn("实验室主任", answer.narrative)
+        self.assertEqual(answer.operation["target_tables"], ["scholars"])
+        self.assertTrue(any(
+            step.get("tool") == "entity_grounding" for step in answer.steps
+        ))
+        self.assertTrue(any(
+            item.get("table") == "scholars" for item in answer.evidence
+        ))
+
+    def test_repeated_action_is_blocked_and_loop_remains_bounded(self):
+        repeated = {
+            "action": "inspect_schema", "tables": ["scholars"],
+            "reason_code": "schema_uncertain",
+        }
+        actions = [repeated, repeated, {"action": "stop", "reason_code": "cannot_progress"}]
+        with mock.patch.object(
+            self.agent.read_explorer, "_next_action", side_effect=actions,
+        ) as planner:
+            answer = self.agent.read_explorer.explore(
+                "查找人物资料",
+                None,
+                dc.DBAnswer(kind="retrieve", narrative="未找到。", evidence=[]),
+            )
+
+        self.assertIsNone(answer)
+        self.assertEqual(planner.call_count, 3)
+
+    def test_grounded_primary_answer_keeps_exploration_audit_when_no_better_result(self):
+        initial = dc.DBAnswer(
+            kind="retrieve",
+            narrative="已找到人物档案。",
+            evidence=[{
+                "table": "scholars", "columns": ["name", "title"],
+                "row": ["肖仰华", "教授、博导"], "matched": "肖仰华",
+            }],
+        )
+        actions = [
+            {
+                "action": "inspect_schema", "tables": ["scholars"],
+                "reason_code": "schema_uncertain",
+            },
+            {"action": "stop", "reason_code": "cannot_progress"},
+        ]
+        with mock.patch.object(
+            self.agent.read_explorer, "_next_action", side_effect=actions,
+        ):
+            answer = self.agent.read_explorer.explore(
+                "肖仰华的资料是什么？请继续核实。",
+                None,
+                initial,
+            )
+
+        self.assertIsNotNone(answer)
+        self.assertEqual(answer.narrative, initial.narrative)
+        self.assertTrue(any(
+            step.get("tool") == "bounded_read_explorer"
+            and step.get("status") == "budget_complete"
+            for step in answer.steps
+        ))
+
+    def test_grounded_primary_answer_can_finish_without_redundant_tool_call(self):
+        initial = dc.DBAnswer(
+            kind="retrieve", narrative="肖仰华是教授、博导。",
+            evidence=[{
+                "table": "scholars", "columns": ["name", "title"],
+                "row": ["肖仰华", "教授、博导"], "matched": "肖仰华",
+            }],
+        )
+        with mock.patch.object(
+            self.agent.read_explorer,
+            "_next_action",
+            return_value={
+                "action": "finish", "answer_zh": "证据已足够：肖仰华是教授、博导。",
+                "reason_code": "answer_grounded",
+            },
+        ):
+            answer = self.agent.read_explorer.explore(
+                "肖仰华的资料是什么？请核实。",
+                None,
+                initial,
+            )
+
+        self.assertIsNotNone(answer)
+        self.assertIn("证据已足够", answer.narrative)
+        completed = [
+            step for step in answer.steps
+            if step.get("tool") == "bounded_read_explorer"
+            and step.get("status") == "completed"
+        ]
+        self.assertEqual(completed[-1]["tool_actions"], 0)
+
+    def test_real_deadline_cancels_a_blocked_planner_call(self):
+        explorer = dc.BoundedReadExplorer(
+            self.agent.nl2sql,
+            self.agent.rag,
+            self.agent.schema,
+            budget=dc.ReadExplorationBudget(max_seconds=0.05),
+        )
+
+        def blocked(*args, **kwargs):
+            event = dc._ACTIVE_CANCEL_EVENT.get()
+            self.assertIsNotNone(event)
+            self.assertTrue(event.wait(1.0))
+            raise dc.LLMServiceError("cancelled")
+
+        started = time.monotonic()
+        with mock.patch.object(explorer, "_next_action", side_effect=blocked):
+            answer = explorer.explore(
+                "查找人物资料",
+                None,
+                dc.DBAnswer(kind="retrieve", narrative="未找到。", evidence=[]),
+            )
+
+        self.assertIsNone(answer)
+        self.assertLess(time.monotonic() - started, 0.5)
+
+    def test_write_and_successful_simple_query_never_enter_explorer(self):
+        write_intent = dc.IntentResult(intent="write", confidence=1.0)
+        write_plan = dc.DatabaseOperationPlan(mode="write", intent="write")
+        self.assertFalse(self.agent.read_explorer.should_explore(
+            "删除 scholars 的记录",
+            write_intent,
+            dc.DBAnswer(kind="write_pending", narrative="等待确认"),
+            operation=write_plan,
+        ))
+        self.assertFalse(self.agent.read_explorer.should_explore(
+            "scholars 有几条记录",
+            dc.IntentResult(intent="query", confidence=1.0),
+            dc.DBAnswer(
+                kind="query", narrative="共 1 条", sql="SELECT COUNT(*) FROM scholars",
+                columns=["COUNT(*)"], rows=[[1]],
+            ),
+            operation=dc.DatabaseOperationPlan(mode="read", intent="query"),
+        ))
+        empty_query = dc.DBAnswer(
+            kind="query", narrative="未返回记录", sql="SELECT id FROM scholars",
+            columns=["id"], rows=[],
+        )
+        self.assertFalse(self.agent.read_explorer.should_explore(
+            "scholars 有哪些记录",
+            dc.IntentResult(intent="query", confidence=1.0),
+            empty_query,
+            operation=dc.DatabaseOperationPlan(mode="read", intent="query"),
+        ))
+        self.assertTrue(self.agent.read_explorer.should_explore(
+            "肖仰华的资料是什么？",
+            dc.IntentResult(intent="query", confidence=0.8),
+            empty_query,
+            operation=dc.DatabaseOperationPlan(mode="read", intent="query"),
+        ))
+
+    def test_agent_entry_uses_explorer_after_empty_retrieval(self):
+        actions = [
+            {
+                "action": "query", "tables": ["scholars"],
+                "question": "查询 scholars 表中肖仰华的 title 和 short_bio",
+                "reason_code": "evidence_missing",
+            },
+            {
+                "action": "finish",
+                "answer_zh": "肖仰华是教授、博导，并担任上海市数据科学重点实验室主任。",
+                "reason_code": "answer_grounded",
+            },
+        ]
+        routed = dc.IntentResult(
+            intent="retrieve", confidence=0.9, reasoning="人物资料检索", source="model",
+        )
+        generated = dc.DBAnswer(
+            kind="query", narrative="查询完成", sql="SELECT title, short_bio FROM scholars",
+            columns=["title", "short_bio"],
+            rows=[["教授、博导", "上海市数据科学重点实验室主任"]],
+        )
+        with mock.patch.object(self.agent.router, "classify", return_value=routed), \
+             mock.patch.object(
+                 self.agent.rag, "answer",
+                 return_value=dc.DBAnswer(kind="retrieve", narrative="未找到。", evidence=[]),
+             ), \
+             mock.patch.object(self.agent.nl2sql, "answer", return_value=generated) as query, \
+             mock.patch.object(self.agent.read_explorer, "_next_action", side_effect=actions):
+            answer = self.agent.ask("查找肖仰华的资料")
+
+        query.assert_called_once_with(
+            "查询 scholars 表中肖仰华的 title 和 short_bio",
+            history=None,
+            allowed_tables=["scholars"],
+        )
+        self.assertEqual(answer.kind, "query")
+        self.assertEqual(answer.operation["action"], "query")
+        self.assertIn("实验室主任", answer.narrative)
+        self.assertTrue(any(
+            step.get("tool") == "bounded_read_explorer"
+            and step.get("status") == "completed"
+            for step in answer.steps
+        ))
 
 
 class FourLayerProbeFixTests(unittest.TestCase):

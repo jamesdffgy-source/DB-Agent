@@ -6,6 +6,11 @@ All notable user-facing changes are recorded here. Versions follow semantic vers
 
 ### Added
 
+- Added a bounded read-only observe/replan loop for unresolved database
+  questions. The model can inspect real schema, retrieve raw evidence, issue a
+  natural-language query, finish, or stop within local step, tool, time, row,
+  authorization, repetition, and entity-grounding limits. Writes never enter
+  this loop.
 - Added a compact Chinese/English selector beside the DBQuill wordmark. The
   interface locale follows the saved local preference, defaults to English on
   first launch, and translates static and dynamically rendered application controls
@@ -14,6 +19,13 @@ All notable user-facing changes are recorded here. Versions follow semantic vers
 
 ### Fixed
 
+- Read routing now preserves model-proposed entities and read targets only after
+  grounding them in the original question and real schema. When a router omits
+  them, exact values from canonical identity columns can supply the execution
+  anchor; later retrievals cannot silently drift to a pronoun or another entity.
+- Chinese evidence keywords now interleave 2/3/4-character candidates by text
+  position, preventing the bounded keyword budget from being exhausted by
+  unmatched 4-character fragments before a real short name is tried.
 - Entity-centric questions now retrieve exact names before broad terms, scan
   descriptive columns independently of physical column order, and exclude
   unrelated records once an exact entity has been found.
