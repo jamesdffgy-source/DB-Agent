@@ -2218,3 +2218,16 @@
 - 仓库简介改为本地优先自然语言数据库智能体，topics 精简为 `database-agent`、`natural-language`、
   `text-to-sql`、`sqlite`、`mysql`、`postgresql`、`local-first` 和 `windows`。本条后执行最后一次
   `--record`，再推送主分支和 `v0.2.0` 标签，以公开 Actions/Release 作为最终发布证据。
+
+## 2026-08-27 10:23 +08:00
+
+- 保持品牌和仓库短名 `DBQuill` 不变，将公开展示名调整为 **DBQuill — Open-Source AI Database Agent**，
+  中文为“DBQuill — 开源 AI 数据库智能体”；README 副标题明确自然语言转 SQL、安全数据库写入与图表，
+  首屏同时说明本地优先、Windows 和 SQLite/MySQL/PostgreSQL 范围。
+- `open-source` 仅描述 MIT 许可下的项目源码，不暗示模型、数据库、用户数据或第三方服务开源，也不改变
+  Windows 源码优先发行、OpenAI-compatible 模型接口、默认只读、受控写预览和确认边界。
+- GitHub About 将使用同一公开描述，并增加 `open-source`、`ai-agent`、`sql-agent`、`nl2sql` 和
+  `natural-language-sql` 等可发现性 topics；这是发布元数据更新，不重命名仓库、不重建 `v0.2.0`。
+- 提交前对照公开 release API，修正 `CURRENT_STATUS` 中仍指向 `v0.1.0` 资产的旧 SHA 和“等待 0.2.0
+  门禁”的过时措辞；当前 `v0.2.0` 源码 ZIP 公开 digest 为
+  `66b44d8e44a29bd601fa9fbe5b1ae065acf1ea532654a0232c23e0d321296cfd`，既有发行资产未被修改。

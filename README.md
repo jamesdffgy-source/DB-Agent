@@ -1,12 +1,12 @@
 <div align="center">
 
-# DBQuill
+# DBQuill — Open-Source AI Database Agent
 
-**Natural-Language Database Agent**
+**Natural Language to SQL · Safe Database Writes · Charts**
 
 Ask your database in plain language. Review every operation before it runs.
 
-A local-first Windows desktop app for querying, understanding, visualizing, and safely updating databases.
+An open-source, local-first Windows AI database agent for querying, understanding, visualizing, and safely updating SQLite, MySQL, and PostgreSQL.
 
 [简体中文](README.zh-CN.md) · [Install](docs/INSTALLATION.md) · [Try the demo](docs/DEMO_TEST_GUIDE.md) · [Security](SECURITY.md)
 

@@ -1,7 +1,7 @@
 {
   "schema_version": 5,
-  "recorded_at": "2026-08-27T01:43:12+08:00",
-  "source_fingerprint": "244f000768c26f72a46d10d8363e86eeb30d25bcd44144d408fd7a80b1f4650c",
+  "recorded_at": "2026-08-27T10:27:16+08:00",
+  "source_fingerprint": "e4a836d134eb3f07869d574273cdf71617f043541b98df953ffe73d9e50e36f6",
   "controlled_file_count": 102,
   "python": "3.12.13",
   "test_command": "scripts/check_project.cmd",
@@ -52,5 +52,5 @@
     "credential_findings": 0,
     "redistributed_assets_verified": 2
   },
-  "summary": "DBQuill v0.2.0 rename and controlled remote DML"
+  "summary": "Open-source AI database agent discoverability metadata"
 }

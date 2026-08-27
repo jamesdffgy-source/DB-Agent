@@ -1,12 +1,12 @@
 <div align="center">
 
-# DBQuill
+# DBQuill — 开源 AI 数据库智能体
 
-**本地优先的自然语言数据库智能体**
+**自然语言转 SQL · 安全写入 · 数据可视化**
 
 用自然语言询问数据库，每一步执行都先经过审查。
 
-一个面向 Windows 的本地优先数据库桌面工具，用于查询、理解、可视化和安全写入数据。
+一个面向 Windows 的开源、本地优先 AI 数据库智能体，用于查询、理解、可视化和安全更新 SQLite、MySQL 与 PostgreSQL 数据库。
 
 [English](README.md) · [安装说明](docs/INSTALLATION.zh-CN.md) · [体验演示](docs/DEMO_TEST_GUIDE.md) · [安全策略](SECURITY.md)
 
