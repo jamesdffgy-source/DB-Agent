@@ -2856,6 +2856,8 @@ class DBAnswer:
     trend_plan: Optional[dict] = None  # 确定性单表时间趋势聚合计划
     relational_plan: Optional[dict] = None  # 本地类型化关系计划与确定性 SQL 编译结果
     report: Optional[dict] = None  # 面向用户的精简调查摘要；原始证据仍由 evidence 承载
+    trace: List[dict] = field(default_factory=list)  # 可公开的阶段/动作/观测摘要，不含隐藏思维链
+    memory: Optional[dict] = None  # 本轮实际使用的记忆层快照
 
 
 _READ_DETAIL_REQUEST_RE = re.compile(
@@ -19381,6 +19383,12 @@ class AutonomousReadExplorer:
         evidence_pool: List[dict],
         report: Optional[dict] = None,
     ) -> DBAnswer:
+        _emit_progress(
+            "synthesize",
+            "正在归纳已验证的数据库证据",
+            91,
+            {"phase": "synthesis", "label": "归纳数据库证据"},
+        )
         final = DBAnswer(**asdict(best))
         if narrative:
             final.narrative = narrative
@@ -19573,6 +19581,29 @@ class AutonomousReadExplorer:
                 break
             action = self._normalize_action(raw_action)
             kind = action["action"]
+            action_labels = {
+                "inspect_schema": "检查相关表结构",
+                "search_schema": "搜索表和字段",
+                "search_values": "跨表搜索真实值",
+                "sample_rows": "抽样核对数据",
+                "find_relations": "核对表间关系",
+                "run_sql": "执行受控只读查询",
+                "retrieve": "召回数据库证据",
+                "query": "验证查询假设",
+                "finish": "准备归纳回答",
+                "stop": "结束本轮探索",
+            }
+            _emit_progress(
+                "explore",
+                action_labels.get(kind, "执行有界探索"),
+                min(82, 48 + planner_step * 8),
+                {
+                    "phase": "action",
+                    "label": action_labels.get(kind, "执行有界探索"),
+                    "action": kind,
+                    "table_count": len(action.get("tables") or []),
+                },
+            )
             event = {
                 "tool": "bounded_read_explorer",
                 "version": self.VERSION,
@@ -19791,6 +19822,32 @@ class AutonomousReadExplorer:
                         best, best_score = answer, score
                 events.append(event)
                 observations.append({"source": kind, **observation})
+                observation_count = int(
+                    event.get("evidence_count")
+                    or event.get("row_count")
+                    or event.get("match_count")
+                    or event.get("sample_count")
+                    or event.get("edge_count")
+                    or event.get("tables_inspected")
+                    or 0
+                )
+                _emit_progress(
+                    "observe",
+                    f"已完成观测：{observation_count} 项结果" if observation_count
+                    else "已完成观测，正在决定下一步",
+                    min(88, 53 + planner_step * 8),
+                    {
+                        "phase": "observation",
+                        "label": (
+                            f"{action_labels.get(kind, '数据库观测')}返回 {observation_count} 项"
+                            if observation_count else
+                            f"{action_labels.get(kind, '数据库观测')}已完成"
+                        ),
+                        "action": kind,
+                        "result_count": observation_count,
+                        "status": str(event.get("status") or "executed"),
+                    },
+                )
             except Exception as exc:  # one failed observation must not abort the read answer
                 event.update(status="failed", error_code=type(exc).__name__)
                 events.append(event)
@@ -20029,6 +20086,67 @@ class DBQuillAgent:
             self.write_previewer,
         )
 
+    def _attach_memory_snapshot(
+        self,
+        answer: DBAnswer,
+        *,
+        question: str,
+        resolved_question: str = "",
+        history: Optional[list] = None,
+        semantic: Optional[SemanticResolution] = None,
+    ) -> DBAnswer:
+        """Expose only the memory layers actually used for this answer."""
+        history_count = min(len(history or []), _HISTORY_MAX_MSGS)
+        inherited_topic = bool(
+            resolved_question
+            and resolved_question.strip() != str(question or "").strip()
+        )
+        semantic_matches = len(semantic.matches) if semantic is not None else 0
+        answer.memory = {
+            "version": "1.0",
+            "layers": [
+                {
+                    "key": "working",
+                    "label": "会话工作记忆",
+                    "active": history_count > 0,
+                    "scope": "当前会话",
+                    "summary": (
+                        f"本轮参考最近 {history_count} 条消息（上限 {_HISTORY_MAX_MSGS} 条）"
+                        if history_count else "本轮没有可用的历史消息"
+                    ),
+                },
+                {
+                    "key": "topic",
+                    "label": "话题锚点",
+                    "active": inherited_topic,
+                    "scope": "当前会话",
+                    "summary": (
+                        "已把短追问绑定到最近的完整问题"
+                        if inherited_topic else "本轮未继承上一问题"
+                    ),
+                },
+                {
+                    "key": "semantic",
+                    "label": "数据库语义记忆",
+                    "active": semantic_matches > 0,
+                    "scope": "当前数据库（持久化）",
+                    "summary": (
+                        f"命中 {semantic_matches} 项业务定义；目录共 {len(self.semantic_catalog.entries)} 项"
+                        if semantic_matches else
+                        f"本轮未命中业务定义；目录共 {len(self.semantic_catalog.entries)} 项"
+                    ),
+                },
+                {
+                    "key": "durable",
+                    "label": "跨会话个人记忆",
+                    "active": False,
+                    "scope": "未启用",
+                    "summary": "不会自动提取或跨会话保存个人偏好与事实",
+                },
+            ],
+        }
+        return answer
+
     def write_form(
         self,
         table_name: str = "",
@@ -20155,7 +20273,7 @@ class DBQuillAgent:
         """总入口：意图路由 → 分发执行。history 为会话内多轮上下文（可选）。"""
         raw_sql_rejection = OriginalSQLRequestGuard.reject_reason(question)
         if raw_sql_rejection:
-            return DBAnswer(
+            answer = DBAnswer(
                 kind="error",
                 narrative=raw_sql_rejection,
                 error="original_request_contains_multiple_sql_statements",
@@ -20175,12 +20293,21 @@ class DBQuillAgent:
                     "model_calls": 0,
                 }],
             )
+            return self._attach_memory_snapshot(
+                answer, question=question, history=history,
+            )
         conversation_answer = self.conversation.answer(
             question,
             clarification=clarification,
         )
         if conversation_answer is not None:
-            return conversation_answer
+            _emit_progress(
+                "intent", "已识别为基础沟通", 30,
+                {"phase": "intent", "label": "基础沟通", "intent": "conversation"},
+            )
+            return self._attach_memory_snapshot(
+                conversation_answer, question=question, history=history,
+            )
         resolved_question = self.operation_planner.resolve_followup(question, history, clarification)
         semantic = self.semantic_catalog.resolve(resolved_question)
         execution_question = semantic.resolved_question
@@ -20197,7 +20324,14 @@ class DBQuillAgent:
                 "targets": schema_plan.target_tables,
                 "status": schema_plan.status,
             }]
-            return ans
+            _emit_progress(
+                "intent", "已识别为数据库结构查看", 32,
+                {"phase": "intent", "label": "数据库结构查看", "intent": "schema"},
+            )
+            return self._attach_memory_snapshot(
+                ans, question=question, resolved_question=resolved_question,
+                history=history, semantic=semantic,
+            )
 
         schema_context = self.schema.compact()
         semantic_context = self.semantic_catalog.prompt_context()
@@ -20219,7 +20353,36 @@ class DBQuillAgent:
                 initial_exploration=ir.initial_exploration,
                 source="deterministic",
             )
+        intent_labels = {
+            "query": "数据查询", "retrieve": "内容检索", "compose": "组合分析",
+            "write": "数据库写操作",
+        }
+        _emit_progress(
+            "intent",
+            "意图判断完成：" + intent_labels.get(ir.intent, ir.intent),
+            30,
+            {
+                "phase": "intent",
+                "label": intent_labels.get(ir.intent, ir.intent),
+                "intent": ir.intent,
+                "strategy": ir.read_strategy,
+                "source": ir.source,
+                "confidence": round(ir.confidence, 2),
+            },
+        )
         operation = self.operation_planner.from_intent(resolved_question, ir)
+        _emit_progress(
+            "plan",
+            "已选择" + ("受控写入" if operation.mode == "write" else "只读") + "路径",
+            40,
+            {
+                "phase": "action",
+                "label": "受控写入" if operation.mode == "write" else "只读执行",
+                "action": operation.action,
+                "mode": operation.mode,
+                "target_count": len(operation.target_tables),
+            },
+        )
         if operation.mode == "write" and isinstance(self.connector, RemoteDBConnector) \
                 and not self.connector.write_enabled:
             operation.status = "failed"
@@ -20227,7 +20390,7 @@ class DBQuillAgent:
                 "远程 MySQL/PostgreSQL 连接当前选择了只读模式；"
                 "未生成、预览或执行写 SQL"
             )
-            return DBAnswer(
+            answer = DBAnswer(
                 kind="error",
                 narrative=(
                     "当前 MySQL/PostgreSQL 数据源以只读模式连接，"
@@ -20241,6 +20404,10 @@ class DBQuillAgent:
                     "status": "rejected",
                     "model_calls": 0,
                 }],
+            )
+            return self._attach_memory_snapshot(
+                answer, question=question, resolved_question=resolved_question,
+                history=history, semantic=semantic,
             )
         clarification = self.operation_planner.clarification_for(resolved_question, operation)
         if self.structured_insert.should_offer(operation, clarification, ir):
@@ -20258,7 +20425,10 @@ class DBQuillAgent:
                 },
                 *(answer.steps or []),
             ]
-            return answer
+            return self._attach_memory_snapshot(
+                answer, question=question, resolved_question=resolved_question,
+                history=history, semantic=semantic,
+            )
         if not operation.target_tables:
             if clarification is not None and clarification.get("missing") == "target_table":
                 mapped = self.operation_planner.llm_map_target_table(
@@ -20328,7 +20498,10 @@ class DBQuillAgent:
         if clarification is not None:
             answer = self.operation_planner.clarification_answer(operation, clarification)
             answer.semantic = semantic.as_dict() if semantic.matches else None
-            return answer
+            return self._attach_memory_snapshot(
+                answer, question=question, resolved_question=resolved_question,
+                history=history, semantic=semantic,
+            )
         metric_answer = (
             self.multi_metric_query.answer(resolved_question, semantic)
             if ir.intent in {"query", "compose"} and ir.read_strategy != "explore"
@@ -20443,6 +20616,10 @@ class DBQuillAgent:
             ans,
             operation=operation,
         ):
+            _emit_progress(
+                "explore", "正在根据真实观测探索数据库", 48,
+                {"phase": "action", "label": "启动有界数据库探索", "action": "explore"},
+            )
             require_data_observation = self.read_explorer.requires_tool_observation(
                 ir, ans, operation,
             )
@@ -20523,7 +20700,14 @@ class DBQuillAgent:
             }] if entity_grounding else []),
         ]
         ans.steps = steps + (ans.steps or [])
-        return ans
+        _emit_progress(
+            "synthesize", "数据库操作完成，正在整理回答", 96,
+            {"phase": "synthesis", "label": "整理回答与报告"},
+        )
+        return self._attach_memory_snapshot(
+            ans, question=question, resolved_question=resolved_question,
+            history=history, semantic=semantic,
+        )
 
     def confirm_write(self, confirm_id: str, approve: bool = True) -> DBAnswer:
         """用户对写提案表态：approve=True 正式执行落库；False 作废（Human-in-the-loop）。"""
@@ -20612,6 +20796,9 @@ _HISTORY_MAX_MSGS = 14  # 会话内多轮历史最多注入的消息条数（约
 _ACTIVE_CANCEL_EVENT: contextvars.ContextVar[Optional[threading.Event]] = (
     contextvars.ContextVar("dbquill_active_cancel_event", default=None)
 )
+_ACTIVE_PROGRESS_CALLBACK: contextvars.ContextVar[Optional[Any]] = (
+    contextvars.ContextVar("dbquill_active_progress_callback", default=None)
+)
 
 
 @contextmanager
@@ -20622,6 +20809,37 @@ def cancellation_scope(cancel_event: Optional[threading.Event]):
         yield
     finally:
         _ACTIVE_CANCEL_EVENT.reset(token)
+
+
+@contextmanager
+def progress_scope(callback: Optional[Any]):
+    """Bind a public progress emitter; callbacks receive no model chain-of-thought."""
+    token = _ACTIVE_PROGRESS_CALLBACK.set(callback)
+    try:
+        yield
+    finally:
+        _ACTIVE_PROGRESS_CALLBACK.reset(token)
+
+
+def _emit_progress(
+    stage: str,
+    label: str,
+    percent: int,
+    detail: Optional[dict] = None,
+) -> None:
+    callback = _ACTIVE_PROGRESS_CALLBACK.get()
+    if not callable(callback):
+        return
+    try:
+        callback(
+            str(stage or "execute")[:32],
+            re.sub(r"\s+", " ", str(label or "执行中")).strip()[:160],
+            max(0, min(100, int(percent))),
+            dict(detail or {}),
+        )
+    except Exception:
+        # Progress is observational and must never change the database answer.
+        pass
 
 
 def _llm_ask(prompt: str, cfg_name: str = "default", history: Optional[list] = None) -> str:

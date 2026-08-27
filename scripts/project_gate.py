@@ -48,6 +48,7 @@ COMPILE_TARGETS = (
     ROOT / "runtime/app/frontends/model_profiles.py",
     ROOT / "runtime/app/frontends/upload_storage.py",
     ROOT / "runtime/app/frontends/desktop_bridge.py",
+    ROOT / "runtime/app/frontends/db_excel_transfer.py",
     ROOT / "runtime/app/frontends/db_scheduler.py",
     ROOT / "runtime/app/frontends/db_sessions_store.py",
     ROOT / "runtime/app/frontends/db_semantic_store.py",

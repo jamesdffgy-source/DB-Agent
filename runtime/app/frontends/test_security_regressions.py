@@ -31,6 +31,7 @@ import db_scheduler
 import db_access_control
 import db_audit_store
 import db_chart_cache
+import db_excel_transfer
 import db_identity_store
 import db_sessions_store
 import db_semantic_store
@@ -161,7 +162,7 @@ class RuntimeDependencyTests(unittest.TestCase):
         self.assertIn('data-locale="en"', html)
         self.assertIn('<html lang="en">', html)
         self.assertIn('data-locale="en" class="active"', html)
-        self.assertIn('src="i18n.js?v=20260827-4"', html)
+        self.assertIn('src="i18n.js?v=20260827-5"', html)
         self.assertIn("window.DBQuillI18n.start()", html)
         self.assertIn("dbquill_locale", i18n)
         self.assertIn("return 'en';", i18n)
@@ -189,6 +190,26 @@ class RuntimeDependencyTests(unittest.TestCase):
         self.assertNotIn("new FileReader()", html)
         self.assertNotIn("readAsDataURL", html)
         self.assertNotIn("dataUrl: reader.result", html)
+
+    def test_desktop_exposes_expandable_audit_trace_memory_and_excel_transfer(self):
+        static_root = Path(__file__).parent / "desktop" / "static"
+        html = (static_root / "db.html").read_text(encoding="utf-8")
+        css = (static_root / "calm-theme.css").read_text(encoding="utf-8")
+        self.assertIn('<details class="audit-item">', html)
+        self.assertIn('class="audit-item-expanded"', html)
+        self.assertIn("auditExpandedRows(event)", html)
+        self.assertIn('class="run-trace"', html)
+        self.assertIn('class="answer-trace"', html)
+        self.assertIn('class="memory-card"', html)
+        self.assertIn('id="excelImportBtn"', html)
+        self.assertIn('id="excelExportBtn"', html)
+        self.assertIn('/db/excel/import/prepare?', html)
+        self.assertIn('/db/excel/import/confirm', html)
+        self.assertIn('/db/excel/export?', html)
+        self.assertIn("不含模型隐藏思维链", html)
+        self.assertIn(".audit-item-expanded", css)
+        self.assertIn(".memory-layer", css)
+        self.assertIn(".excel-import-modal", css)
 
     def test_desktop_uses_single_owner_mode_without_role_management_ui(self):
         html_path = Path(__file__).parent / "desktop" / "static" / "db.html"
@@ -229,7 +250,7 @@ class RuntimeDependencyTests(unittest.TestCase):
         self.assertIn('id="writeFormModal"', html)
         self.assertIn('id="writeFormTable"', html)
         self.assertIn('id="writeFormGrid"', html)
-        self.assertIn('calm-theme.css?v=20260827-5', html)
+        self.assertIn('calm-theme.css?v=20260827-6', html)
         self.assertIn("原表示例", html)
         self.assertIn("生成变更预览", html)
         self.assertIn("/db/write/form?", html)
@@ -791,6 +812,15 @@ class AccessControlContractTests(unittest.TestCase):
             "viewer",
         )
         self.assertEqual(db_access_control.required_role("POST", "/db/semantics"), "operator")
+        self.assertEqual(db_access_control.required_role("GET", "/db/excel/export"), "viewer")
+        self.assertEqual(
+            db_access_control.required_role("POST", "/db/excel/import/prepare"),
+            "operator",
+        )
+        self.assertEqual(
+            db_access_control.required_role("POST", "/db/excel/import/confirm"),
+            "operator",
+        )
         self.assertEqual(db_access_control.required_role("POST", "/db/audit/backups"), "admin")
         self.assertEqual(
             db_access_control.required_role(
@@ -1068,6 +1098,173 @@ class SessionAccessScopeStoreTests(unittest.TestCase):
                 )
 
 
+class ExcelTransferTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.database = self.root / "target.sqlite"
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute(
+                "CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT NOT NULL)"
+            )
+            connection.execute(
+                "CREATE TABLE tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE)"
+            )
+            connection.execute("INSERT INTO items(value) VALUES ('=literal-formula-text')")
+            connection.commit()
+        self.agent = dc.DBQuillAgent(db_path=str(self.database))
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _workbook(self, name: str, sheets: dict[str, list[list[object]]]) -> Path:
+        from openpyxl import Workbook
+        path = self.root / name
+        workbook = Workbook()
+        first = True
+        for sheet_name, rows in sheets.items():
+            worksheet = workbook.active if first else workbook.create_sheet()
+            first = False
+            worksheet.title = sheet_name
+            for row in rows:
+                worksheet.append(row)
+        workbook.save(path)
+        workbook.close()
+        return path
+
+    def test_prepare_then_confirm_imports_rows_in_one_transaction(self):
+        source = self._workbook("merge.xlsx", {
+            "items": [["value"], ["alpha"], ["beta"]],
+            "tags": [["name"], ["new-tag"]],
+        })
+        preview = db_excel_transfer.prepare_import(
+            str(source), db_id="db1", database_ref="ref1", access_scope_ref="all",
+            agent=self.agent,
+        )
+        self.assertEqual(preview["tableCount"], 2)
+        self.assertEqual(preview["rowCount"], 3)
+        self.assertFalse(preview["requiresAdmin"])
+        result = db_excel_transfer.execute_import(
+            preview["confirmId"], db_id="db1", database_ref="ref1",
+            access_scope_ref="all", agent=self.agent,
+        )
+        self.assertEqual(result["affected"], 3)
+        with closing(sqlite3.connect(self.database)) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM items").fetchone()[0], 3)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM tags").fetchone()[0], 1)
+        self.assertFalse(source.exists())
+
+    def test_import_failure_rolls_back_every_worksheet(self):
+        source = self._workbook("rollback.xlsx", {
+            "items": [["value"], ["must-rollback"]],
+            "tags": [["name"], ["duplicate"], ["duplicate"]],
+        })
+        preview = db_excel_transfer.prepare_import(
+            str(source), db_id="db1", database_ref="ref1", access_scope_ref="all",
+            agent=self.agent,
+        )
+        with self.assertRaisesRegex(db_excel_transfer.ExcelTransferError, "全部变更已回滚"):
+            db_excel_transfer.execute_import(
+                preview["confirmId"], db_id="db1", database_ref="ref1",
+                access_scope_ref="all", agent=self.agent,
+            )
+        with closing(sqlite3.connect(self.database)) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM items").fetchone()[0], 1)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM tags").fetchone()[0], 0)
+
+    def test_formula_cells_are_rejected_before_confirmation(self):
+        source = self._workbook("formula.xlsx", {"items": [["value"], ["=1+1"]]})
+        with self.assertRaisesRegex(db_excel_transfer.ExcelTransferError, "包含公式"):
+            db_excel_transfer.prepare_import(
+                str(source), db_id="db1", database_ref="ref1", access_scope_ref="all",
+                agent=self.agent,
+            )
+
+    def test_export_is_multisheet_round_trip_safe_and_formula_text_stays_text(self):
+        exported = db_excel_transfer.export_workbook(str(self.root / "exports"), agent=self.agent)
+        self.assertEqual(exported["tableCount"], 2)
+        self.assertEqual(exported["rowCount"], 1)
+        from openpyxl import load_workbook
+        workbook = load_workbook(exported["path"], data_only=False)
+        try:
+            self.assertIn(db_excel_transfer.MANIFEST_SHEET, workbook.sheetnames)
+            self.assertEqual(workbook["items"]["B2"].value, "=literal-formula-text")
+            self.assertEqual(workbook["items"]["B2"].data_type, "s")
+        finally:
+            workbook.close()
+
+    def test_excel_transfer_enforces_table_column_and_row_scope(self):
+        scoped_agent = dc.DBQuillAgent(
+            db_path=str(self.database),
+            allowed_tables=["items"],
+            allowed_columns={"items": ["value"]},
+            row_filters={
+                "items": [{
+                    "column": "value", "operator": "eq", "value": "=literal-formula-text",
+                }],
+            },
+        )
+        source = self._workbook("row-scoped.xlsx", {"items": [["value"], ["blocked"]]})
+        with self.assertRaisesRegex(db_excel_transfer.ExcelTransferError, "行级授权"):
+            db_excel_transfer.prepare_import(
+                str(source), db_id="db1", database_ref="ref1",
+                access_scope_ref="row-scope", agent=scoped_agent,
+            )
+
+        exported = db_excel_transfer.export_workbook(
+            str(self.root / "scoped-exports"), agent=scoped_agent,
+        )
+        self.assertEqual(exported["tableCount"], 1)
+        self.assertEqual(exported["rowCount"], 1)
+        from openpyxl import load_workbook
+        workbook = load_workbook(exported["path"], data_only=False)
+        try:
+            self.assertNotIn("tags", workbook.sheetnames)
+            self.assertEqual(
+                list(workbook["items"].values),
+                [("value",), ("=literal-formula-text",)],
+            )
+        finally:
+            workbook.close()
+
+
+class PublicProgressAndMemoryTests(unittest.TestCase):
+    def test_progress_scope_emits_only_public_structured_events(self):
+        events = []
+        with dc.progress_scope(lambda stage, label, percent, detail: events.append(
+            (stage, label, percent, detail),
+        )):
+            dc._emit_progress(
+                "intent", "意图判断完成", 30,
+                {"phase": "intent", "intent": "query"},
+            )
+        self.assertEqual(events[0][0], "intent")
+        self.assertEqual(events[0][2], 30)
+        self.assertEqual(events[0][3]["intent"], "query")
+
+    def test_memory_snapshot_truthfully_marks_durable_personal_memory_disabled(self):
+        agent = self.agent = dc.DBQuillAgent(db_path=str(self._database_for_memory()))
+        answer = agent._attach_memory_snapshot(
+            dc.DBAnswer(kind="conversation", narrative="ok"),
+            question="继续", resolved_question="上一个完整问题；追问：继续",
+            history=[{"role": "user", "content": "上一个完整问题"}],
+        )
+        layers = {item["key"]: item for item in answer.memory["layers"]}
+        self.assertTrue(layers["working"]["active"])
+        self.assertTrue(layers["topic"]["active"])
+        self.assertFalse(layers["durable"]["active"])
+
+    def _database_for_memory(self) -> Path:
+        temporary = tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False)
+        temporary.close()
+        path = Path(temporary.name)
+        self.addCleanup(path.unlink, missing_ok=True)
+        with closing(sqlite3.connect(path)) as connection:
+            connection.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT)")
+            connection.commit()
+        return path
+
+
 class LocalApiAuthTests(AioHTTPTestCase):
     async def get_application(self):
         app = web.Application(middlewares=[desktop_bridge.cors_middleware])
@@ -1085,6 +1282,13 @@ class LocalApiAuthTests(AioHTTPTestCase):
             "/db/databases/{db_id}", desktop_bridge.db_detach_handler,
         )
         app.router.add_post("/upload", desktop_bridge.upload_handler)
+        app.router.add_post(
+            "/db/excel/import/prepare", desktop_bridge.db_excel_import_prepare_handler,
+        )
+        app.router.add_post(
+            "/db/excel/import/confirm", desktop_bridge.db_excel_import_confirm_handler,
+        )
+        app.router.add_get("/db/excel/export", desktop_bridge.db_excel_export_handler)
 
         async def allowed(_request):
             return web.json_response({"ok": True})
@@ -1308,6 +1512,57 @@ class LocalApiAuthTests(AioHTTPTestCase):
         uploaded_id = payload["db"]["id"]
         self.assertIn(uploaded_id, desktop_bridge._DB_AGENT_DBS)
         self.addCleanup(desktop_bridge._DB_AGENT_DBS.pop, uploaded_id, None)
+
+    async def test_excel_import_confirmation_and_export_endpoints_round_trip(self):
+        source_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(source_dir.cleanup)
+        database = Path(source_dir.name) / "excel-target.sqlite"
+        _make_db(database, rows=1)
+        db_id = "excel-endpoint-test"
+        desktop_bridge._DB_AGENT_DBS[db_id] = {
+            "id": db_id, "name": "excel-target.sqlite", "path": str(database),
+            "tables": ["items"], "kind": "sqlite", "attachedAt": 0,
+        }
+        self.addCleanup(desktop_bridge._DB_AGENT_DBS.pop, db_id, None)
+        self.addCleanup(desktop_bridge._DB_AGENT_CACHE.pop, db_id, None)
+        from openpyxl import Workbook
+        workbook_path = Path(source_dir.name) / "merge.xlsx"
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = "items"
+        worksheet.append(["value"])
+        worksheet.append(["from-excel"])
+        workbook.save(workbook_path)
+        workbook.close()
+        form = FormData()
+        form.add_field(
+            "file", workbook_path.read_bytes(), filename="merge.xlsx",
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        prepared = await self.client.post(
+            f"/db/excel/import/prepare?dbId={db_id}&sid=excel-endpoint",
+            headers={"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN},
+            data=form,
+        )
+        self.assertEqual(prepared.status, 200, await prepared.text())
+        preview = (await prepared.json())["preview"]
+        self.assertEqual(preview["rowCount"], 1)
+        confirmed = await self.client.post(
+            "/db/excel/import/confirm",
+            headers={"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN},
+            json={"dbId": db_id, "confirmId": preview["confirmId"], "approved": True},
+        )
+        self.assertEqual(confirmed.status, 200, await confirmed.text())
+        self.assertEqual((await confirmed.json())["answer"]["write"]["affected"], 1)
+        with closing(sqlite3.connect(database)) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM items").fetchone()[0], 2)
+        exported = await self.client.get(
+            f"/db/excel/export?dbId={db_id}",
+            headers={"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN},
+        )
+        self.assertEqual(exported.status, 200)
+        self.assertIn("application/vnd.openxmlformats", exported.headers["Content-Type"])
+        self.assertTrue((await exported.read()).startswith(b"PK"))
 
     async def test_streaming_upload_enforces_limit_and_removes_partial_file(self):
         form = FormData()

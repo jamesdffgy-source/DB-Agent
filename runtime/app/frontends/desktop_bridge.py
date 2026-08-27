@@ -903,6 +903,19 @@ def _db_agent_core():
     return dbquill_core
 
 
+def _db_excel_transfer():
+    """Lazy-load Excel transfer support so the bridge still starts without it."""
+    import sys as _sys
+    here = str(Path(__file__).resolve().parent)
+    if here not in _sys.path:
+        _sys.path.insert(0, here)
+    try:
+        import db_excel_transfer
+    except Exception as exc:
+        raise RuntimeError(f"Excel 导入导出组件加载失败: {exc}") from exc
+    return db_excel_transfer
+
+
 def _default_model_profile() -> str:
     """Prefer the DBQuill setting while accepting the v0.1 environment name."""
     return str(
@@ -1829,6 +1842,51 @@ def _db_run_update(run_id: str, **kw) -> bool:
     return True
 
 
+def _db_run_progress(
+    run_id: str,
+    stage: str,
+    label: str,
+    percent: int,
+    detail: Optional[dict] = None,
+) -> None:
+    """Publish a bounded, user-visible execution trace without model reasoning."""
+    run = _DB_RUNS.get(run_id)
+    if run is None or run.get("status") != "running":
+        return
+    safe_detail = {}
+    allowed = {
+        "phase", "label", "intent", "strategy", "source", "confidence",
+        "action", "mode", "target_count", "table_count", "result_count", "status",
+    }
+    for key, value in (detail or {}).items():
+        if key not in allowed or value is None:
+            continue
+        if isinstance(value, bool):
+            safe_detail[key] = value
+        elif isinstance(value, (int, float)):
+            safe_detail[key] = value
+        else:
+            safe_detail[key] = re.sub(r"\s+", " ", str(value)).strip()[:120]
+    entry = {
+        "phase": str(safe_detail.pop("phase", stage or "execute"))[:32],
+        "label": str(safe_detail.pop("label", label or "执行中"))[:160],
+        "detail": safe_detail,
+    }
+    trace = list(run.get("trace") or [])
+    fingerprint = json.dumps(entry, ensure_ascii=False, sort_keys=True, default=str)
+    previous = json.dumps(trace[-1], ensure_ascii=False, sort_keys=True, default=str) \
+        if trace else ""
+    if fingerprint != previous:
+        trace.append(entry)
+        trace = trace[-16:]
+    run.update({
+        "stage": str(stage or "execute")[:32],
+        "label": str(label or "执行中")[:160],
+        "percent": max(0, min(100, int(percent))),
+        "trace": trace,
+    })
+
+
 def _db_answer_to_dict(ans: Any) -> dict:
     """DBAnswer dataclass → JSON 可序列化 dict。"""
     from dataclasses import asdict
@@ -1857,6 +1915,8 @@ def _db_answer_to_dict(ans: Any) -> dict:
             "trend_plan": getattr(ans, "trend_plan", None),
             "relational_plan": getattr(ans, "relational_plan", None),
             "report": getattr(ans, "report", None),
+            "trace": list(getattr(ans, "trace", [])),
+            "memory": getattr(ans, "memory", None),
         }
 
 
@@ -2025,21 +2085,34 @@ def _db_ask_workflow(run_id: str, db_id: str, question: str, sid: str = "", hist
             return
         clarification = run.get("clarification") or None
         core = _db_agent_core()
-        with core.cancellation_scope(cancel_event):
+        progress_callback = lambda stage, label, percent, detail=None: _db_run_progress(
+            run_id, stage, label, percent, detail,
+        )
+        with core.cancellation_scope(cancel_event), core.progress_scope(progress_callback):
             try:
                 agent = _db_get_agent(db_id, run.get("llmCfg") or None)
                 if cancel_event is not None and cancel_event.is_set():
                     return
-                _db_run_update(run_id, percent=20, stage="intent", label="意图判断完成，执行中")
+                _db_run_progress(
+                    run_id, "intent", "数据库已就绪，正在判断意图", 18,
+                    {"phase": "action", "label": "加载数据库上下文"},
+                )
                 ans = agent.ask(question, history=history, clarification=clarification)
             except ValueError as exc:
                 if "model profile" not in str(exc).lower():
                     raise
                 if cancel_event is not None and cancel_event.is_set():
                     return
-                _db_run_update(run_id, llmCfg=None, label="配置不可用，已回退默认模型")
+                _db_run_progress(
+                    run_id, "model", "配置不可用，已回退默认模型", 18,
+                    {"phase": "action", "label": "回退默认模型"},
+                )
+                _db_run_update(run_id, llmCfg=None)
                 agent = _db_get_agent(db_id, None)
-                _db_run_update(run_id, percent=20, stage="intent", label="意图判断完成，执行中")
+                _db_run_progress(
+                    run_id, "intent", "数据库已就绪，正在判断意图", 20,
+                    {"phase": "action", "label": "加载数据库上下文"},
+                )
                 ans = agent.ask(question, history=history, clarification=clarification)
         current_run = _DB_RUNS.get(run_id, {})
         if (cancel_event is not None and cancel_event.is_set()) \
@@ -2056,6 +2129,13 @@ def _db_ask_workflow(run_id: str, db_id: str, question: str, sid: str = "", hist
                 stage="done", label="已取消",
             )
             return
+        completion_trace = list(current_run.get("trace") or [])
+        completion_trace.append({
+            "phase": "complete", "label": "回答与报告已生成", "detail": {},
+        })
+        completion_trace = completion_trace[-16:]
+        with contextlib.suppress(Exception):
+            ans.trace = completion_trace
         answer = _db_answer_to_dict(ans)
         confirm_id = str(getattr(ans, "confirm_id", "") or "")
         if confirm_id:
@@ -2090,7 +2170,10 @@ def _db_ask_workflow(run_id: str, db_id: str, question: str, sid: str = "", hist
         # 只有回答与待澄清状态都已写入会话后才发布 done；否则客户端可能
         # 在两者之间发起下一轮，导致短回复丢失结构化澄清上下文。
         _audit_nl_terminal(run_id, db_id, question, sid, answer=answer)
-        _db_run_update(run_id, status="done", percent=100, stage="done", label="回答完成")
+        _db_run_update(
+            run_id, status="done", percent=100, stage="done", label="回答完成",
+            trace=completion_trace,
+        )
     except Exception as exc:
         current_run = _DB_RUNS.get(run_id, {})
         if (cancel_event is not None and cancel_event.is_set()) \
@@ -2410,7 +2493,7 @@ def _db_session_display_payload(ans: Any) -> Optional[dict]:
     if datasets:
         payload["datasets"] = datasets
     for key in (
-        "report", "evidence", "steps", "operation", "graph", "semantic", "calendar_plan",
+        "report", "trace", "memory", "evidence", "steps", "operation", "graph", "semantic", "calendar_plan",
         "metric_plan", "dimension_plan", "trend_plan", "relational_plan",
     ):
         if answer.get(key):
@@ -2433,7 +2516,7 @@ def _db_session_display_payload(ans: Any) -> Optional[dict]:
                 holder["rows"] = rows[:max(3, len(rows) // 2)]
             continue
         removed = False
-        for key in ("graph", "steps", "relational_plan", "semantic", "sql"):
+        for key in ("graph", "steps", "trace", "relational_plan", "semantic", "sql"):
             if key in payload:
                 payload.pop(key, None)
                 removed = True
@@ -4122,6 +4205,234 @@ async def db_schedules_logs_handler(request):
         return json_ok({"ok": False, "error": str(exc)}, status=500)
 
 
+async def db_excel_import_prepare_handler(request):
+    """Upload and validate one workbook without changing the target database."""
+    db_id = str(request.query.get("dbId") or "").strip()
+    if not db_id:
+        return json_ok({"ok": False, "error": "missing dbId"}, status=400)
+    entry = _db_entry(db_id)
+    if entry is None:
+        return json_ok({"ok": False, "error": f"database not attached: {db_id}"}, status=404)
+    uploaded_path: Optional[Path] = None
+    try:
+        uploaded_path, _safe_name, original_name = await _receive_multipart_upload(request)
+        if Path(original_name).suffix.lower() != ".xlsx":
+            raise ValueError("并入当前数据库只支持 .xlsx 文件")
+        agent = _db_get_agent(db_id)
+        transfer = _db_excel_transfer()
+        preview = await asyncio.to_thread(
+            transfer.prepare_import,
+            str(uploaded_path),
+            db_id=db_id,
+            database_ref=_database_scope_ref(entry),
+            access_scope_ref=_current_access_scope_ref(entry),
+            agent=agent,
+        )
+        confirm_ref = _audit_ref(preview["confirmId"])
+        _audit_append(
+            db_id,
+            category="write_confirmation",
+            action="excel_import_prepare",
+            outcome="pending",
+            summary="Excel 批量导入已完成预检，等待确认",
+            risk="high" if preview.get("requiresAdmin") else "medium",
+            correlation_id=confirm_ref,
+            details={
+                "confirm_ref": confirm_ref,
+                "target_refs": [_audit_ref(item.get("table")) for item in preview.get("tables", [])],
+                "target_count": int(preview.get("tableCount") or 0),
+                "affected_rows": int(preview.get("rowCount") or 0),
+                "approval_policy": "high_risk" if preview.get("requiresAdmin") else "bounded_dml",
+            },
+        )
+        return json_ok({"ok": True, "preview": preview})
+    except web.HTTPRequestEntityTooLarge:
+        if uploaded_path is not None:
+            uploaded_path.unlink(missing_ok=True)
+        return json_ok({"ok": False, "error": "file too large"}, status=413)
+    except web.HTTPException:
+        raise
+    except Exception as exc:
+        if uploaded_path is not None:
+            with contextlib.suppress(OSError):
+                uploaded_path.unlink(missing_ok=True)
+        return json_ok({"ok": False, "error": str(exc)}, status=400)
+
+
+async def db_excel_import_confirm_handler(request):
+    """Approve or cancel a one-time, schema-bound Excel import plan."""
+    data = await read_json(request)
+    db_id = str(data.get("dbId") or "").strip()
+    confirm_id = str(data.get("confirmId") or "").strip()
+    approved = bool(data.get("approved"))
+    if not db_id or not confirm_id:
+        return json_ok({"ok": False, "error": "missing dbId or confirmId"}, status=400)
+    entry = _db_entry(db_id)
+    if entry is None:
+        return json_ok({"ok": False, "error": f"database not attached: {db_id}"}, status=404)
+    transfer = _db_excel_transfer()
+    pending = transfer.pending_import(confirm_id)
+    if pending is None or pending.get("dbId") != db_id or not _stored_access_scope_allowed(
+        db_id, pending.get("accessScopeRef"),
+    ):
+        return json_ok({"ok": False, "error": "Excel import confirmation not found"}, status=404)
+    confirm_ref = _audit_ref(confirm_id)
+    if not approved:
+        transfer.cancel_import(confirm_id)
+        _audit_append(
+            db_id,
+            category="write_confirmation",
+            action="excel_import_reject",
+            outcome="rejected",
+            summary="用户取消 Excel 批量导入",
+            risk="medium",
+            correlation_id=confirm_ref,
+            details={"confirm_ref": confirm_ref, "approval_policy": "reject"},
+        )
+        return json_ok({
+            "ok": True,
+            "answer": {
+                "kind": "write_result",
+                "narrative": "已取消 Excel 导入，数据库未发生变化。",
+                "write": {"affected": 0, "kind": "EXCEL_IMPORT"},
+                "operation": {
+                    "action": "insert", "mode": "write", "intent": "write",
+                    "target_tables": [], "risk": "medium",
+                    "requires_confirmation": True, "status": "cancelled",
+                },
+            },
+        })
+    required_role = "admin" if int(pending.get("rowCount") or 0) > 100 else "operator"
+    if not _access_control.role_allows(_current_role(), required_role):
+        return json_ok({
+            "ok": False,
+            "error": "当前角色无权批准该规模的 Excel 批量导入",
+            "role": _current_role(),
+            "requiredRole": required_role,
+        }, status=403)
+    approval_policy = "high_risk" if required_role == "admin" else "bounded_dml"
+    try:
+        _audit_append(
+            db_id,
+            category="write_confirmation",
+            action="excel_import_approve",
+            outcome="approved",
+            summary="用户批准 Excel 批量导入",
+            risk="high" if required_role == "admin" else "medium",
+            correlation_id=confirm_ref,
+            details={"confirm_ref": confirm_ref, "approval_policy": approval_policy},
+            strict=True,
+        )
+    except AuditGateError as exc:
+        return json_ok({"ok": False, "error": str(exc)}, status=503)
+    try:
+        agent = _db_get_agent(db_id)
+        result = await asyncio.to_thread(
+            transfer.execute_import,
+            confirm_id,
+            db_id=db_id,
+            database_ref=_database_scope_ref(entry),
+            access_scope_ref=_current_access_scope_ref(entry),
+            agent=agent,
+        )
+        _DB_AGENT_CACHE.pop(db_id, None)
+        _audit_append(
+            db_id,
+            category="write_execution",
+            action="excel_import",
+            outcome="succeeded",
+            summary="Excel 批量导入已在单一事务中完成",
+            risk="high" if required_role == "admin" else "medium",
+            correlation_id=confirm_ref,
+            details={
+                "confirm_ref": confirm_ref,
+                "affected_rows": int(result.get("affected") or 0),
+                "target_count": int(result.get("tableCount") or 0),
+                "target_refs": [_audit_ref(item.get("table")) for item in result.get("tables", [])],
+                "approval_policy": approval_policy,
+            },
+        )
+        return json_ok({
+            "ok": True,
+            "answer": {
+                "kind": "write_result",
+                "narrative": (
+                    f"Excel 已并入 {result['tableCount']} 张表，共新增 {result['affected']} 行；"
+                    "所有工作表在同一事务中提交。"
+                ),
+                "write": {
+                    "affected": result["affected"], "kind": "EXCEL_IMPORT",
+                    "tables": result["tables"],
+                },
+                "operation": {
+                    "action": "insert", "mode": "write", "intent": "write",
+                    "target_tables": [item["table"] for item in result["tables"]],
+                    "risk": "high" if required_role == "admin" else "medium",
+                    "requires_confirmation": True, "status": "executed",
+                },
+            },
+        })
+    except Exception as exc:
+        _audit_append(
+            db_id,
+            category="write_execution",
+            action="excel_import",
+            outcome="failed",
+            summary="Excel 批量导入失败并回滚",
+            risk="high",
+            correlation_id=confirm_ref,
+            details={
+                "confirm_ref": confirm_ref,
+                "error_type": type(exc).__name__,
+                "error_sha256": _audit_sha256(str(exc)),
+                "approval_policy": approval_policy,
+            },
+        )
+        return json_ok({"ok": False, "error": str(exc)}, status=400)
+
+
+async def db_excel_export_handler(request):
+    """Export the current authorized database view to a multi-sheet workbook."""
+    db_id = str(request.query.get("dbId") or "").strip()
+    if not db_id:
+        return json_ok({"ok": False, "error": "missing dbId"}, status=400)
+    entry = _db_entry(db_id)
+    if entry is None:
+        return json_ok({"ok": False, "error": f"database not attached: {db_id}"}, status=404)
+    try:
+        agent = _db_get_agent(db_id)
+        transfer = _db_excel_transfer()
+        exported = await asyncio.to_thread(
+            transfer.export_workbook,
+            str(DEFAULT_APP_ROOT / "temp" / "excel_exports"),
+            agent=agent,
+        )
+        _audit_append(
+            db_id,
+            category="nl_operation",
+            action="excel_export",
+            outcome="succeeded",
+            summary="当前授权数据库视图已导出为 Excel",
+            risk="low",
+            details={
+                "result_rows": int(exported.get("rowCount") or 0),
+                "target_count": int(exported.get("tableCount") or 0),
+            },
+        )
+        filename = f"dbquill-{db_id}-{datetime.now().strftime('%Y%m%d')}.xlsx"
+        return web.FileResponse(
+            exported["path"],
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+    except Exception as exc:
+        return json_ok({"ok": False, "error": str(exc)}, status=400)
+
+
 async def db_ask_handler(request):
     data = await read_json(request)
     db_id = str(data.get("dbId") or "").strip()
@@ -4158,6 +4469,7 @@ async def db_ask_handler(request):
         "accessScopeRef": _current_access_scope_ref(_db_entry_unchecked(db_id)),
         "status": "running", "percent": 5, "stage": "intent",
         "label": "正在判断意图", "error": "", "result": None,
+        "trace": [{"phase": "intent", "label": "接收请求并判断意图", "detail": {}}],
         "cancelRequested": False, "createdAt": time.time(),
         "clarification": clarification,
     }
@@ -4599,6 +4911,9 @@ def create_app():
         "/db/write/prepare-create-table", db_write_prepare_create_table_handler,
     )
     app.router.add_post("/db/write/confirm", db_write_confirm_handler)
+    app.router.add_post("/db/excel/import/prepare", db_excel_import_prepare_handler)
+    app.router.add_post("/db/excel/import/confirm", db_excel_import_confirm_handler)
+    app.router.add_get("/db/excel/export", db_excel_export_handler)
     app.router.add_get("/db/ask/{run_id}/progress", db_progress_handler)
     app.router.add_post("/db/ask/{run_id}/cancel", db_cancel_handler)
     app.router.add_get("/db/sessions", db_sessions_handler)

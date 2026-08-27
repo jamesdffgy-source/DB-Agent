@@ -6,6 +6,18 @@ All notable user-facing changes are recorded here. Versions follow semantic vers
 
 ### Added
 
+- Added an observable execution timeline that shows public intent, action,
+  observation, synthesis, and completion stages without exposing model
+  chain-of-thought. Completed timelines persist in the conversation snapshot.
+- Added an explicit four-layer memory card for session context, topic anchors,
+  persistent database semantics, and the intentionally disabled cross-session
+  personal-memory layer.
+- Added transactional Excel merge and export. A workbook is validated against
+  existing tables, columns, types, permissions, file/schema fingerprints, and
+  row limits before one-time confirmation; all worksheets commit or roll back
+  together. Authorized database views export to round-trip-safe `.xlsx` files.
+- Audit events can now be expanded to inspect the complete redacted event,
+  correlation identifiers, metadata, and hash-chain fields.
 - Added a dual-layer read response contract. Database investigations now lead
   with a one- or two-sentence conversational answer and place up to four key
   findings, coverage, and material open questions in a separate compact report.

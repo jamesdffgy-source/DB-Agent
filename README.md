@@ -23,8 +23,9 @@ An open-source, local-first Windows AI database agent for querying, understandin
 DBQuill turns a request into a typed, reviewable database operation before anything reaches the database. Read paths are physically read-only and bounded. Write paths stop at validation and a change preview until the user explicitly confirms them.
 
 - **Ask naturally:** inspect schemas, search rows, calculate grouped metrics, compare periods, and continue with follow-up questions.
-- **See useful results:** switch between tables and colorful charts without losing the underlying evidence.
-- **Write deliberately:** choose a target table, fill a form based on its real columns and sample shape, preview the change, then confirm.
+- **See useful results:** follow the public intent/action/observation stages, then inspect tables, charts, evidence, and expandable audit details.
+- **Write deliberately:** use a schema-based form or validate a multi-sheet Excel workbook, preview the change, then confirm one transactional write.
+- **See memory honestly:** each answer shows whether session context, a topic anchor, or the persistent database semantic catalog was used; automatic cross-session personal memory is not claimed.
 - **Keep control locally:** database credentials, model profiles, sessions, audit records, and uploads stay outside the source tree.
 
 ## See it in 60 seconds
@@ -34,7 +35,8 @@ DBQuill turns a request into a typed, reviewable database operation before anyth
 1. Attach a SQLite database, import CSV/`.xlsx`, or add a read-only or controlled-write MySQL/PostgreSQL connection.
 2. Ask a question such as `Which products grew fastest this quarter?`
 3. Review the interpreted operation, relationship path, result table, and charts.
-4. For an insert, choose the table, complete the generated form, review the preview, and confirm once.
+4. For an insert, choose the table and complete the generated form, or merge a workbook whose sheets and headers match existing tables and columns.
+5. Export the current authorized database view as a multi-sheet `.xlsx`; DBQuill exports can be edited and validated for import again.
 
 ## Quick start on Windows
 

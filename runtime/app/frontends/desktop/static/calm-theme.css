@@ -3869,3 +3869,369 @@ html[lang="en"] .nav-tab {
     display: inline-flex;
   }
 }
+
+/* Public execution trace: observable stages only, never hidden model reasoning. */
+.run-trace {
+  display: grid;
+  gap: 6px;
+  margin-top: 13px;
+  padding-left: 10px;
+  border-left: 2px solid #d9e1ea;
+}
+
+.run-trace-item {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  gap: 9px;
+  align-items: baseline;
+  color: var(--text-3);
+  font-size: 10.5px;
+}
+
+.run-trace-item span {
+  color: #68788b;
+  font: 650 9px var(--mono);
+  letter-spacing: .08em;
+}
+
+.run-trace-item strong {
+  overflow: hidden;
+  font-weight: 520;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-trace-item.active strong {
+  color: var(--text);
+}
+
+.answer-trace,
+.memory-card {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8f9f8;
+}
+
+.answer-trace > summary,
+.memory-card > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.answer-trace > summary::-webkit-details-marker,
+.memory-card > summary::-webkit-details-marker {
+  display: none;
+}
+
+.answer-trace > summary::before,
+.memory-card > summary::before {
+  content: "+";
+  color: #486987;
+  font: 700 14px var(--mono);
+}
+
+.answer-trace[open] > summary::before,
+.memory-card[open] > summary::before {
+  content: "−";
+}
+
+.answer-trace > summary span,
+.memory-card > summary span {
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 670;
+}
+
+.answer-trace > summary small,
+.memory-card > summary small {
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: 9.5px;
+}
+
+.answer-trace-list,
+.memory-layer-list {
+  display: grid;
+  gap: 0;
+  padding: 0 12px 11px;
+}
+
+.answer-trace-list > div {
+  display: grid;
+  grid-template-columns: 24px 58px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-height: 30px;
+  border-top: 1px solid var(--line);
+  font-size: 10.5px;
+}
+
+.answer-trace-list i {
+  color: var(--text-3);
+  font: 600 9px var(--mono);
+  font-style: normal;
+}
+
+.answer-trace-list span {
+  color: #58718c;
+  font: 650 9px var(--mono);
+}
+
+.answer-trace-list strong {
+  font-weight: 520;
+}
+
+.memory-layer {
+  display: grid;
+  grid-template-columns: 9px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 45px;
+  border-top: 1px solid var(--line);
+}
+
+.memory-layer > i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #b7c0ca;
+}
+
+.memory-layer.active > i {
+  background: #3a7b63;
+  box-shadow: 0 0 0 3px rgba(58, 123, 99, .1);
+}
+
+.memory-layer > div {
+  display: grid;
+  gap: 2px;
+}
+
+.memory-layer strong {
+  font-size: 10.5px;
+}
+
+.memory-layer span,
+.memory-layer > small {
+  color: var(--text-3);
+  font-size: 9.5px;
+}
+
+.memory-layer > small {
+  text-align: right;
+}
+
+/* Audit rows are native expandable records with a complete redacted payload. */
+.audit-item {
+  display: block;
+  padding: 0;
+}
+
+.audit-item-summary {
+  display: grid;
+  grid-template-columns: 126px minmax(0, 1fr) 122px;
+  gap: 14px;
+  padding: 14px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.audit-item-summary::-webkit-details-marker {
+  display: none;
+}
+
+.audit-item[open] .audit-item-summary {
+  background: #f7f9fb;
+}
+
+.audit-item-expanded {
+  padding: 2px 14px 16px 154px;
+  background: #f7f9fb;
+}
+
+.audit-expanded-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.audit-expanded-title strong {
+  font-size: 11px;
+}
+
+.audit-expanded-title span {
+  color: var(--text-3);
+  font-size: 9.5px;
+}
+
+.audit-item-expanded dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 18px;
+  margin: 0;
+}
+
+.audit-item-expanded dl > div {
+  display: grid;
+  grid-template-columns: minmax(92px, .35fr) minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 0;
+  border-bottom: 1px dashed #dce2e8;
+}
+
+.audit-item-expanded dt {
+  color: var(--text-3);
+  font: 600 9px var(--mono);
+}
+
+.audit-item-expanded dd {
+  overflow-wrap: anywhere;
+  color: var(--text-2);
+  font: 500 9.5px/1.5 var(--mono);
+}
+
+/* Transactional Excel transfer. */
+.composer-data-tool {
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  font-size: 10.5px;
+}
+
+.excel-import-modal {
+  width: min(960px, 94vw);
+  max-width: none;
+  max-height: min(88vh, 820px);
+  padding: 0;
+  overflow: hidden;
+}
+
+.excel-import-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 16px 24px 8px;
+}
+
+.excel-import-summary span {
+  display: grid;
+  gap: 3px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text-3);
+  font-size: 9.5px;
+}
+
+.excel-import-summary b {
+  color: var(--text);
+  font: 650 14px var(--mono);
+}
+
+.excel-import-preview {
+  display: grid;
+  gap: 10px;
+  max-height: 48vh;
+  padding: 8px 24px 14px;
+  overflow: auto;
+}
+
+.excel-import-table {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+}
+
+.excel-import-table-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+}
+
+.excel-import-table-head > div {
+  display: grid;
+  gap: 2px;
+}
+
+.excel-import-table-head strong {
+  font-size: 12px;
+}
+
+.excel-import-table-head span,
+.excel-import-table-head > b {
+  color: var(--text-3);
+  font: 600 9.5px var(--mono);
+}
+
+.excel-import-safety {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 24px;
+  padding: 10px 12px;
+  border-left: 3px solid #3a7b63;
+  background: #f2f7f4;
+  font-size: 10.5px;
+}
+
+.excel-import-safety span {
+  color: var(--text-2);
+}
+
+@media (max-width: 760px) {
+  .audit-item-summary {
+    grid-template-columns: 96px minmax(0, 1fr);
+  }
+
+  .audit-item-summary .audit-item-state {
+    grid-column: 2;
+    align-items: flex-start;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .audit-item-expanded {
+    padding-left: 14px;
+  }
+
+  .audit-item-expanded dl {
+    grid-template-columns: 1fr;
+  }
+
+  .excel-import-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .answer-trace > summary,
+  .memory-card > summary,
+  .audit-expanded-title {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .answer-trace > summary small,
+  .memory-card > summary small {
+    margin-left: 24px;
+  }
+
+  .memory-layer {
+    grid-template-columns: 9px minmax(0, 1fr);
+  }
+
+  .memory-layer > small {
+    grid-column: 2;
+    text-align: left;
+  }
+}

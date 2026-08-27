@@ -478,7 +478,7 @@
   .log-item b { color: var(--text); font-weight: 600; }
   .empty-tip { color: var(--text-3); font-size: 12.5px; text-align: center; padding: 26px 0; }
 </style>
-<link rel="stylesheet" href="calm-theme.css?v=20260827-5">
+<link rel="stylesheet" href="calm-theme.css?v=20260827-6">
 </head>
 <body>
 <div class="bg-glow"></div>
@@ -504,6 +504,7 @@
       <button class="btn" id="settingsBtn" title="配置模型与 API Key（保存在本机本地配置，不进入源码或审计）"><span class="ico">⚙</span>设置</button>
       <div class="ws-dot" id="wsDot" title="bridge 连接状态"></div>
       <input type="file" id="fileInput" accept=".db,.sqlite,.sqlite3,.csv,.xlsx" hidden>
+      <input type="file" id="excelMergeInput" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
     </div>
   </header>
 
@@ -532,6 +533,8 @@
           <button class="db-chip-lg" id="dbChipBtn" title="当前数据库；新对话状态可点击更换">未选择数据库</button>
           <span class="ctx-sep">·</span>
           <span class="model-chip" id="modelChip" title="当前模型配置（在设置中修改）">默认模型</span>
+          <button class="btn composer-data-tool" id="excelImportBtn" data-allowed-title="将格式合规的 Excel 预检后并入当前数据库">↑ 并入 Excel</button>
+          <button class="btn composer-data-tool" id="excelExportBtn" title="把当前权限范围内的数据导出为多工作表 Excel">↓ 导出 Excel</button>
           <button class="btn composer-create-table" id="createTableBtn" title="为当前本地 SQLite 数据库自定义创建表">＋ 新建表</button>
         </div>
         <div class="composer-box">
@@ -540,7 +543,7 @@
             <svg viewBox="0 0 24 24"><path d="M3 11.5 21 3l-8.5 18-2.1-7.4L3 11.5z"/></svg>
           </button>
         </div>
-        <div class="composer-hint">Enter 发送 · Shift+Enter 换行 · 可上传任意 SQLite / CSV 文件对话（CSV 自动转库）</div>
+        <div class="composer-hint">Enter 发送 · Shift+Enter 换行 · Excel 可作为新数据库接入，也可预检后并入当前库</div>
       </div>
     </div>
   </section>
@@ -1016,6 +1019,28 @@
   </div>
 </div>
 
+<div class="modal-mask" id="excelImportModal">
+  <div class="modal excel-import-modal" role="dialog" aria-modal="true" aria-labelledby="excelImportTitle">
+    <div class="write-form-heading">
+      <div>
+        <span>TRANSACTIONAL EXCEL IMPORT</span>
+        <h3 id="excelImportTitle">并入当前数据库</h3>
+      </div>
+      <small>工作表对应已有表，首行为物理字段名；预检不会写入数据库</small>
+    </div>
+    <div class="excel-import-summary" id="excelImportSummary"></div>
+    <div class="excel-import-preview" id="excelImportPreview"></div>
+    <div class="excel-import-safety">
+      <strong>单一事务</strong>
+      <span>确认时重新校验文件、权限与数据库结构；任一工作表失败会全部回滚。</span>
+    </div>
+    <div class="actions write-form-actions">
+      <button class="btn" id="excelImportCancel">取消</button>
+      <button class="btn primary" id="excelImportConfirm">确认并入</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-mask" id="semanticImportModal">
   <div class="modal semantic-import-modal">
     <div class="semantic-import-heading">
@@ -1102,7 +1127,7 @@
 </div>
 
 <script src="vendor/echarts.min.js"></script>
-<script src="i18n.js?v=20260827-4"></script>
+<script src="i18n.js?v=20260827-5"></script>
 <script>
 'use strict';
 /* ================= DBQuill 前端逻辑 ================= */
@@ -1136,6 +1161,7 @@ const state = {
   modelsLoaded: false,     // 列表是否成功加载（提醒条只在明确无密钥时显示）
   writeForm: null,         // { dbId, payload } 结构化单行录入草稿
   createTable: null,       // { dbId, returnToWrite } 受控 DDL 草稿
+  excelImport: null,       // { dbId, confirmId, preview } Excel 批量写确认单
   access: {
     role: 'viewer', label: '查看者',
     databaseScope: { mode: 'all', databaseCount: 0, tableScopeTableCount: 0, columnScopeColumnCount: 0, rowScopeFilterCount: 0 },
@@ -1207,6 +1233,7 @@ function applyAccessContext(access) {
   setRoleDisabled('semanticImport', 'manage_workspace', '当前会话没有修改工作区的权限');
   setRoleDisabled('semSave', 'manage_workspace', '当前会话没有修改工作区的权限');
   setRoleDisabled('semanticImportApply', 'manage_workspace', '当前会话没有修改工作区的权限');
+  setRoleDisabled('excelImportBtn', 'approve_bounded_write', '当前会话不能执行 Excel 批量写入');
   setRoleDisabled('createTableBtn', 'approve_high_risk_write', '只有管理员可以创建数据库结构');
   setRoleDisabled('writeFormCreateTable', 'approve_high_risk_write', '只有管理员可以创建数据库结构');
   setRoleDisabled('createTablePrepare', 'approve_high_risk_write', '只有管理员可以生成 DDL 确认单');
@@ -1220,6 +1247,7 @@ function applyAccessContext(access) {
   setRoleDisabled('credentialRowScopeMode', 'manage_credentials', '只有全局管理员可以设置行范围');
   setRoleDisabled('credentialIssue', 'manage_credentials', '只有管理员可以发行个人凭据');
   renderCredentialDatabaseScopes();
+  renderDbChip();
 }
 async function loadAccessContext() {
   const payload = await api('/db/auth/context');
@@ -1482,6 +1510,7 @@ function addRunCard() {
         '<button class="run-cancel" id="runCancel">取消</button>' +
       '</div>' +
       '<div class="run-label" id="runLabel">正在判断意图</div>' +
+      '<div class="run-trace" id="runTrace" aria-live="polite"><div class="run-trace-item active"><span>意图</span><strong>接收请求并判断意图</strong></div></div>' +
       '<div class="run-bar"><i id="runBar" style="width:6%"></i></div>' +
     '</div>';
   $('#chatScroll').appendChild(wrap);
@@ -1493,6 +1522,18 @@ function updateRunCard(run) {
   const st = $('#runStage'); if (st) st.textContent = run.stage === 'done' ? '完成' : (run.label || run.stage);
   const lb = $('#runLabel'); if (lb) lb.textContent = run.label || '';
   const bar = $('#runBar'); if (bar) bar.style.width = Math.max(6, run.percent || 6) + '%';
+  const traceBox = $('#runTrace');
+  if (traceBox && Array.isArray(run.trace)) {
+    const phaseLabels = {
+      intent: '意图', action: '动作', observation: '观测', synthesis: '归纳',
+      complete: '完成', plan: '规划', explore: '探索', execute: '执行',
+    };
+    traceBox.innerHTML = run.trace.slice(-8).map((item, index, items) =>
+      '<div class="run-trace-item' + (index === items.length - 1 ? ' active' : '') + '">' +
+      '<span>' + esc(phaseLabels[item.phase] || item.phase || '阶段') + '</span>' +
+      '<strong>' + esc(item.label || '') + '</strong></div>'
+    ).join('');
+  }
 }
 function scrollDown() {
   const sc = $('#chatScroll');
@@ -1534,8 +1575,10 @@ async function poll(runId) {
   for (let i = 0; i < 600; i++) {
     const j = await api('/db/ask/' + runId + '/progress');
     const run = j.run;
-    if (lastStatus !== run.status + '|' + (run.stage || '') + '|' + (run.percent || '')) {
-      lastStatus = run.status + '|' + (run.stage || '') + '|' + (run.percent || '');
+    const traceTail = Array.isArray(run.trace) && run.trace.length
+      ? run.trace.length + ':' + (run.trace[run.trace.length - 1].label || '') : '';
+    if (lastStatus !== run.status + '|' + (run.stage || '') + '|' + (run.percent || '') + '|' + traceTail) {
+      lastStatus = run.status + '|' + (run.stage || '') + '|' + (run.percent || '') + '|' + traceTail;
       updateRunCard(run);
     }
     if (run.status === 'done') {
@@ -1904,6 +1947,26 @@ function addAnswerCard(res, sourceDbId = state.dbId, historyMode = false) {
       }
       inner += '</section>';
     }
+  }
+  if (Array.isArray(res.trace) && res.trace.length) {
+    const tracePhaseLabels = {
+      intent: '意图', action: '动作', observation: '观测', synthesis: '归纳',
+      complete: '完成', plan: '规划', explore: '探索', execute: '执行',
+    };
+    inner += '<details class="answer-trace"><summary><span>简要过程</span><small>阶段与真实观测摘要，不含模型隐藏思维链</small></summary><div class="answer-trace-list">';
+    res.trace.slice(-12).forEach((item, index) => {
+      inner += '<div><i>' + (index + 1) + '</i><span>' + esc(tracePhaseLabels[item.phase] || item.phase || '阶段') + '</span><strong>' + esc(item.label || '') + '</strong></div>';
+    });
+    inner += '</div></details>';
+  }
+  if (res.memory && Array.isArray(res.memory.layers)) {
+    const layers = res.memory.layers.slice(0, 6);
+    const activeCount = layers.filter(layer => layer && layer.active).length;
+    inner += '<details class="memory-card"><summary><span>记忆使用</span><small>' + activeCount + ' / ' + layers.length + ' 层在本轮生效</small></summary><div class="memory-layer-list">';
+    layers.forEach(layer => {
+      inner += '<div class="memory-layer ' + (layer.active ? 'active' : 'inactive') + '"><i></i><div><strong>' + esc(layer.label || layer.key || '记忆层') + '</strong><span>' + esc(layer.summary || '') + '</span></div><small>' + esc(layer.scope || '') + '</small></div>';
+    });
+    inner += '</div></details>';
   }
   // NL-to-Database 操作计划：自然语言如何被解释、会影响什么，一眼可审计。
   // 值按语义着色：只读/自动选择/已执行=绿，写入/等待确认或补充/中风险=黄，失败/取消/高风险=红。
@@ -2473,6 +2536,25 @@ function renderDbChip() {
     btn.classList.remove('locked');
     btn.title = '当前数据库；点击更换（将开始新对话）';
   }
+  const importButton = $('#excelImportBtn');
+  const exportButton = $('#excelExportBtn');
+  const remoteReadOnly = Boolean(db && ['mysql', 'postgres'].includes(db.kind) && db.writeEnabled === false);
+  if (importButton) {
+    importButton.disabled = !db || !roleCan('approve_bounded_write') || remoteReadOnly;
+    importButton.title = !db
+      ? '请先选择数据库'
+      : remoteReadOnly
+      ? '当前远程数据库以只读模式连接'
+      : !roleCan('approve_bounded_write')
+      ? '当前会话不能执行 Excel 批量写入'
+      : '将格式合规的 Excel 预检后并入当前数据库';
+  }
+  if (exportButton) {
+    exportButton.disabled = !db;
+    exportButton.title = db
+      ? '把当前权限范围内的数据导出为多工作表 Excel'
+      : '请先选择数据库';
+  }
 }
 function renderModelChip() {
   const el = $('#modelChip');
@@ -2665,6 +2747,126 @@ $('#mTest').onclick = async () => {
   }
 };
 
+/* ---------- Excel 并入 / 导出 ---------- */
+function renderExcelImportPreview(preview) {
+  const tables = Array.isArray(preview.tables) ? preview.tables : [];
+  $('#excelImportSummary').innerHTML =
+    '<span><b>' + Number(preview.tableCount || tables.length) + '</b> 张目标表</span>' +
+    '<span><b>' + Number(preview.rowCount || 0) + '</b> 行待新增</span>' +
+    '<span><b>' + (preview.requiresAdmin ? '管理员' : '操作员') + '</b> 确认级别</span>';
+  $('#excelImportPreview').innerHTML = tables.map(item =>
+    '<section class="excel-import-table"><div class="excel-import-table-head"><div><strong>' + esc(item.table || '') + '</strong><span>工作表 ' + esc(item.sheet || '') + '</span></div><b>' + Number(item.rowCount || 0) + ' 行</b></div>' +
+    renderMiniTable({ columns: item.columns || [], rows: item.preview || [] }) + '</section>'
+  ).join('');
+  const confirmButton = $('#excelImportConfirm');
+  const allowed = preview.requiresAdmin
+    ? roleCan('approve_high_risk_write')
+    : roleCan('approve_bounded_write');
+  confirmButton.disabled = !allowed;
+  confirmButton.title = allowed ? '重新校验后在单一事务中写入' : '当前角色不能批准该规模的导入';
+}
+async function prepareExcelImport(file) {
+  if (!state.dbId) { toast('请先选择数据库'); return; }
+  if (file.size > 25 * 1024 * 1024) { toast('Excel 导入文件不能超过 25MB'); return; }
+  const dbId = state.dbId;
+  const form = new FormData();
+  form.append('file', file, file.name);
+  uploadToast('正在上传并预检 Excel：' + file.name, 0);
+  try {
+    const payload = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/db/excel/import/prepare?dbId=' + encodeURIComponent(dbId) + '&sid=' + encodeURIComponent(state.sessionId || 'web'));
+      xhr.responseType = 'json';
+      xhr.upload.onprogress = event => {
+        const total = event.lengthComputable && event.total ? event.total : file.size;
+        const percent = total ? Math.round(event.loaded * 100 / total) : null;
+        uploadToast('正在上传并预检 Excel：' + file.name, percent);
+      };
+      xhr.upload.onload = () => uploadToast('正在校验工作表、字段和类型');
+      xhr.onerror = () => reject(new Error('本地 Excel 上传连接中断'));
+      xhr.onload = () => {
+        const result = xhr.response || {};
+        if (xhr.status < 200 || xhr.status >= 300 || result.ok === false) {
+          reject(new Error(result.error || ('HTTP ' + xhr.status)));
+          return;
+        }
+        resolve(result);
+      };
+      xhr.send(form);
+    });
+    state.excelImport = { dbId, confirmId: payload.preview.confirmId, preview: payload.preview };
+    renderExcelImportPreview(payload.preview);
+    openModal('#excelImportModal');
+    toast('预检完成，确认前数据库尚未变化');
+  } catch (error) {
+    toast('Excel 预检失败：' + error.message, 5600);
+  }
+}
+async function decideExcelImport(approved) {
+  const draft = state.excelImport;
+  if (!draft) { closeModal('#excelImportModal'); return; }
+  const confirmButton = $('#excelImportConfirm');
+  const cancelButton = $('#excelImportCancel');
+  confirmButton.disabled = true;
+  cancelButton.disabled = true;
+  try {
+    const payload = await api('/db/excel/import/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ dbId: draft.dbId, confirmId: draft.confirmId, approved }),
+    });
+    closeModal('#excelImportModal');
+    state.excelImport = null;
+    if (payload.answer) addAnswerCard(payload.answer, draft.dbId);
+    toast(approved ? 'Excel 已通过事务并入数据库' : '已取消 Excel 导入');
+    if (approved) await loadDatabases();
+  } catch (error) {
+    toast((approved ? 'Excel 导入失败：' : '取消失败：') + writeActionError(error), 5600);
+  } finally {
+    cancelButton.disabled = false;
+    if (state.excelImport) renderExcelImportPreview(state.excelImport.preview);
+  }
+}
+async function exportDatabaseExcel() {
+  if (!state.dbId) { toast('请先选择数据库'); return; }
+  const button = $('#excelExportBtn');
+  button.disabled = true;
+  toast('正在导出当前权限范围内的数据…', 0);
+  try {
+    const response = await fetch('/db/excel/export?dbId=' + encodeURIComponent(state.dbId));
+    if (!response.ok) {
+      let detail = null;
+      try { detail = await response.json(); } catch (e) { detail = null; }
+      throw new Error((detail && detail.error) || ('HTTP ' + response.status));
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const matched = disposition.match(/filename="?([^";]+)"?/i);
+    const filename = matched ? matched[1] : ('dbquill-' + state.dbId + '.xlsx');
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    toast('Excel 导出完成；该文件可修改后重新并入');
+  } catch (error) {
+    toast('Excel 导出失败：' + error.message, 5600);
+  } finally {
+    renderDbChip();
+  }
+}
+$('#excelImportBtn').onclick = () => $('#excelMergeInput').click();
+$('#excelMergeInput').onchange = event => {
+  const file = event.target.files[0];
+  event.target.value = '';
+  if (file) void prepareExcelImport(file);
+};
+$('#excelImportConfirm').onclick = () => void decideExcelImport(true);
+$('#excelImportCancel').onclick = () => void decideExcelImport(false);
+$('#excelExportBtn').onclick = () => void exportDatabaseExcel();
+
 /* ---------- 上传 ---------- */
 /* 顶栏上传按钮已移除；上传入口为选库浮层中的“上传数据” */
 $('#fileInput').onchange = async e => {
@@ -2848,6 +3050,25 @@ function auditDetailText(details) {
   if (d.evidence_sha256) parts.push('证据指纹 ' + d.evidence_sha256.slice(0, 10));
   return parts;
 }
+function auditExpandedRows(event) {
+  const labels = {
+    event_id: '事件 ID', occurred_at: '发生时间', category: '类别', action: '动作',
+    outcome: '结果', risk: '风险', actor: '操作者', database_key: '数据库标识',
+    session_id: '会话 ID', run_id: '运行 ID', correlation_id: '关联 ID',
+    previous_hash: '前序哈希', event_hash: '事件哈希', sequence: '序号',
+  };
+  const rows = [];
+  Object.keys(labels).forEach(key => {
+    const value = event[key];
+    if (value !== undefined && value !== null && String(value) !== '') rows.push([labels[key], String(value)]);
+  });
+  const details = event.details && typeof event.details === 'object' ? event.details : {};
+  Object.keys(details).sort().forEach(key => {
+    const value = details[key];
+    rows.push(['details.' + key, typeof value === 'object' ? JSON.stringify(value) : String(value)]);
+  });
+  return rows;
+}
 function renderAuditEvents(events) {
   const box = $('#auditList');
   $('#auditCnt').textContent = events.length;
@@ -2857,19 +3078,23 @@ function renderAuditEvents(events) {
   }
   box.innerHTML = events.map(event => {
     const details = auditDetailText(event.details);
-    return `<article class="audit-item">
-      <div class="audit-item-index"><strong>#${esc(event.sequence)}</strong><span>${esc(auditTime(event.occurred_at))}</span></div>
-      <div class="audit-item-main">
-        <div class="audit-item-title"><strong>${esc(event.summary)}</strong><code>${esc(event.action)}</code></div>
-        <div class="audit-item-meta">${details.map(item => `<span>${esc(item)}</span>`).join('')}</div>
-        <div class="audit-item-chain">事件 ${esc(String(event.event_id || '').slice(0, 10))} · 哈希 ${esc(String(event.event_hash || '').slice(0, 12))}</div>
-      </div>
-      <div class="audit-item-state">
-        <span class="audit-category">${esc(_AUDIT_CATEGORY_LABELS[event.category] || event.category)}</span>
-        <span class="audit-outcome ${esc(event.outcome)}">${esc(_AUDIT_OUTCOME_LABELS[event.outcome] || event.outcome)}</span>
-        <small>${esc(_AUDIT_RISK_LABELS[event.risk] || event.risk)}</small>
-      </div>
-    </article>`;
+    const expanded = auditExpandedRows(event);
+    return `<details class="audit-item">
+      <summary class="audit-item-summary">
+        <div class="audit-item-index"><strong>#${esc(event.sequence)}</strong><span>${esc(auditTime(event.occurred_at))}</span></div>
+        <div class="audit-item-main">
+          <div class="audit-item-title"><strong>${esc(event.summary)}</strong><code>${esc(event.action)}</code></div>
+          <div class="audit-item-meta">${details.map(item => `<span>${esc(item)}</span>`).join('')}</div>
+          <div class="audit-item-chain">事件 ${esc(String(event.event_id || '').slice(0, 10))} · 哈希 ${esc(String(event.event_hash || '').slice(0, 12))} · 点击展开</div>
+        </div>
+        <div class="audit-item-state">
+          <span class="audit-category">${esc(_AUDIT_CATEGORY_LABELS[event.category] || event.category)}</span>
+          <span class="audit-outcome ${esc(event.outcome)}">${esc(_AUDIT_OUTCOME_LABELS[event.outcome] || event.outcome)}</span>
+          <small>${esc(_AUDIT_RISK_LABELS[event.risk] || event.risk)}</small>
+        </div>
+      </summary>
+      <div class="audit-item-expanded"><div class="audit-expanded-title"><strong>完整脱敏事件</strong><span>账本不保存原始问题、SQL、结果行或连接凭据</span></div><dl>${expanded.map(row => `<div><dt>${esc(row[0])}</dt><dd>${esc(row[1])}</dd></div>`).join('')}</dl></div>
+    </details>`;
   }).join('');
 }
 function renderAuditPending(reconciliation) {
