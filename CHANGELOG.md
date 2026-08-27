@@ -6,11 +6,13 @@ All notable user-facing changes are recorded here. Versions follow semantic vers
 
 ### Added
 
-- Added a bounded read-only observe/replan loop for unresolved database
-  questions. The model can inspect real schema, retrieve raw evidence, issue a
-  natural-language query, finish, or stop within local step, tool, time, row,
-  authorization, repetition, and entity-grounding limits. Writes never enter
-  this loop.
+- Added a model-led autonomous read investigation path for unfamiliar databases.
+  The model sees the complete authorized table catalog and can direct global
+  value searches, schema searches, row samples, relation inspection, natural-
+  language queries, and validated read-only SQL over multiple observations.
+  Local code contains no domain table or synonym map; it enforces identifiers,
+  permissions, query safety, evidence provenance, repetition, time, and action
+  budgets. Writes never enter this loop.
 - Added a compact Chinese/English selector beside the DBQuill wordmark. The
   interface locale follows the saved local preference, defaults to English on
   first launch, and translates static and dynamically rendered application controls

@@ -1,11 +1,11 @@
 {
   "schema_version": 5,
-  "recorded_at": "2026-08-27T14:19:54+08:00",
-  "source_fingerprint": "68fa157c1c701901cd32750c75e18c247f2cb80b4aadb1c247fd41d66a96bc4f",
+  "recorded_at": "2026-08-27T15:52:07+08:00",
+  "source_fingerprint": "03ab1fce8d98c10fc802d2ab5309da9dbb7224d8d730c0494195328aafb04d7c",
   "controlled_file_count": 103,
   "python": "3.12.13",
   "test_command": "scripts/check_project.cmd",
-  "tests_passed": 445,
+  "tests_passed": 456,
   "evaluation": {
     "suite_version": "2026.08.17-v23",
     "offline_passed": 134,
@@ -52,5 +52,5 @@
     "credential_findings": 0,
     "redistributed_assets_verified": 2
   },
-  "summary": "Add bounded read exploration and grounded entity replanning"
+  "summary": "Add model-led autonomous database exploration"
 }

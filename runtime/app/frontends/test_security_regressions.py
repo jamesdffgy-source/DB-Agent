@@ -5069,6 +5069,370 @@ class BoundedReadExplorerTests(unittest.TestCase):
             for step in answer.steps
         ))
 
+    def test_model_can_direct_global_value_search_without_program_table_mapping(self):
+        actions = [
+            {
+                "action": "search_values",
+                "terms": ["肖仰华"],
+                "tables": [],
+                "match_mode": "exact",
+                "reason_code": "evidence_missing",
+            },
+            {
+                "action": "finish",
+                "answer_zh": "肖仰华是教授、博导，并担任实验室主任。",
+                "reason_code": "answer_grounded",
+            },
+        ]
+        with mock.patch.object(
+            self.agent.read_explorer, "_next_action", side_effect=actions,
+        ) as planner:
+            answer = self.agent.read_explorer.explore(
+                "肖仰华做过什么工作？",
+                None,
+                dc.DBAnswer(kind="retrieve", narrative="尚未调查。", evidence=[]),
+                anchor_entities=["肖仰华"],
+            )
+
+        self.assertIsNotNone(answer)
+        self.assertEqual(planner.call_count, 2)
+        self.assertIn("实验室主任", answer.narrative)
+        self.assertTrue(any(
+            item.get("table") == "scholars"
+            and item.get("matched") == "肖仰华"
+            for item in answer.evidence
+        ))
+        search_step = next(
+            step for step in answer.steps
+            if step.get("action") == "search_values"
+        )
+        self.assertGreaterEqual(search_step["queries_executed"], 2)
+        self.assertNotIn("terms", search_step)
+
+    def test_model_can_explore_opaque_schema_and_use_read_only_sql(self):
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.execute("CREATE TABLE x_17 (c_1 TEXT, c_2 TEXT, c_3 TEXT)")
+            conn.execute(
+                "INSERT INTO x_17 VALUES (?, ?, ?)",
+                ("肖仰华", "实验室主任", "数据科学"),
+            )
+            conn.commit()
+        agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0)
+        actions = [
+            {
+                "action": "search_values", "terms": ["肖仰华"],
+                "tables": [], "reason_code": "evidence_missing",
+            },
+            {
+                "action": "inspect_schema", "tables": ["x_17"],
+                "reason_code": "schema_uncertain",
+            },
+            {
+                "action": "run_sql",
+                "sql": "SELECT c_2, c_3 FROM x_17 WHERE c_1 = '肖仰华'",
+                "reason_code": "evidence_missing",
+            },
+            {
+                "action": "finish",
+                "answer_zh": "肖仰华担任实验室主任，相关方向是数据科学。",
+                "reason_code": "answer_grounded",
+            },
+        ]
+        with mock.patch.object(
+            agent.read_explorer, "_next_action", side_effect=actions,
+        ):
+            answer = agent.read_explorer.explore(
+                "肖仰华做什么工作？",
+                None,
+                dc.DBAnswer(kind="retrieve", narrative="尚未调查。", evidence=[]),
+                anchor_entities=["肖仰华"],
+            )
+
+        self.assertIsNotNone(answer)
+        self.assertEqual(answer.kind, "query")
+        self.assertEqual(answer.columns, ["c_2", "c_3"])
+        self.assertEqual(answer.rows, [["实验室主任", "数据科学"]])
+        self.assertIn("实验室主任", answer.narrative)
+
+    def test_model_can_follow_declared_relation_after_entity_wide_recall(self):
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.execute(
+                "CREATE TABLE professional_engagements ("
+                "person_ref INTEGER REFERENCES scholars(id), duty TEXT, context TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO professional_engagements VALUES (1, ?, ?)",
+                ("期刊编委", "国际学术期刊"),
+            )
+            conn.commit()
+        agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=0)
+        actions = [
+            {
+                "action": "search_values", "terms": ["肖仰华"],
+                "tables": [], "match_mode": "exact",
+                "reason_code": "evidence_missing",
+            },
+            {
+                "action": "find_relations",
+                "tables": ["scholars", "professional_engagements"],
+                "reason_code": "relation_unknown",
+            },
+            {
+                "action": "run_sql",
+                "sql": (
+                    "SELECT p.duty, p.context FROM scholars AS s "
+                    "JOIN professional_engagements AS p ON p.person_ref = s.id "
+                    "WHERE s.name = '肖仰华'"
+                ),
+                "reason_code": "evidence_missing",
+            },
+            {
+                "action": "finish",
+                "answer_zh": "肖仰华还担任国际学术期刊编委。",
+                "reason_code": "answer_grounded",
+            },
+        ]
+        with mock.patch.object(
+            agent.read_explorer, "_next_action", side_effect=actions,
+        ):
+            answer = agent.read_explorer.explore(
+                "肖仰华有哪些工作？",
+                None,
+                dc.DBAnswer(kind="retrieve", narrative="尚未调查。", evidence=[]),
+                anchor_entities=["肖仰华"],
+            )
+
+        self.assertIsNotNone(answer)
+        self.assertEqual(answer.rows, [["期刊编委", "国际学术期刊"]])
+        self.assertTrue(any(
+            step.get("action") == "find_relations"
+            and step.get("edge_count") == 1
+            for step in answer.steps
+        ))
+
+    def test_generic_value_search_uses_bound_parameters(self):
+        injected = self.agent.read_explorer.tools.search_values(
+            ["肖仰华' OR 1=1 --"],
+            tables=["scholars"],
+            match_mode="exact",
+        )
+        self.assertEqual(injected["evidence"], [])
+        normal = self.agent.read_explorer.tools.search_values(
+            ["肖仰华"],
+            tables=["scholars"],
+            match_mode="exact",
+        )
+        self.assertEqual(len(normal["evidence"]), 1)
+        with closing(sqlite3.connect(self.path)) as conn:
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM scholars").fetchone()[0],
+                1,
+            )
+
+    def test_value_search_reports_all_hit_tables_before_evidence_truncation(self):
+        result = self.agent.read_explorer.tools.search_values(
+            ["肖仰华"],
+            tables=None,
+            match_mode="exact",
+            max_results=1,
+        )
+        self.assertEqual(len(result["evidence"]), 1)
+        self.assertTrue(result["truncated"])
+        self.assertEqual(
+            {item["table"] for item in result["hit_tables"]},
+            {"scholars", "audit_mentions"},
+        )
+
+    def test_model_read_strategy_controls_exploration_without_breaking_fast_path(self):
+        initial = dc.DBAnswer(
+            kind="retrieve",
+            narrative="肖仰华是教授。",
+            evidence=[{
+                "table": "scholars", "columns": ["name", "title"],
+                "row": ["肖仰华", "教授、博导"], "matched": "肖仰华",
+            }],
+        )
+        operation = dc.DatabaseOperationPlan(mode="read", intent="retrieve")
+        self.assertTrue(self.agent.read_explorer.should_explore(
+            "肖仰华有哪些工作？",
+            dc.IntentResult(
+                intent="retrieve", entities=["肖仰华"],
+                read_strategy="explore",
+            ),
+            initial,
+            operation=operation,
+        ))
+        self.assertFalse(self.agent.read_explorer.should_explore(
+            "肖仰华是谁？",
+            dc.IntentResult(
+                intent="retrieve", entities=["肖仰华"],
+                read_strategy="fast",
+            ),
+            initial,
+            operation=operation,
+        ))
+
+    def test_router_can_request_autonomous_exploration(self):
+        payload = {
+            "intent": "retrieve",
+            "interaction": "auto",
+            "target_table": "",
+            "entities": ["肖仰华"],
+            "read_strategy": "explore",
+            "initial_exploration": {
+                "action": "search_values", "terms": ["肖仰华"],
+                "tables": [], "columns": [], "match_mode": "exact",
+                "reason_code": "evidence_missing",
+            },
+            "confidence": 0.97,
+            "reasoning": "信息可能散落在多张英文表中",
+        }
+        with mock.patch.object(dc, "_llm_ask_json", return_value=payload):
+            routed = self.agent.router.classify(
+                "肖仰华有哪些工作？",
+                self.agent.schema.compact(),
+            )
+        self.assertEqual(routed.read_strategy, "explore")
+        self.assertEqual(routed.entities, ["肖仰华"])
+        self.assertEqual(
+            routed.initial_exploration["action"], "search_values",
+        )
+
+    def test_router_first_exploration_action_is_reused_without_another_model_call(self):
+        initial_action = {
+            "action": "search_values", "terms": ["肖仰华"],
+            "tables": [], "match_mode": "exact",
+            "reason_code": "evidence_missing",
+        }
+        with mock.patch.object(
+            self.agent.read_explorer,
+            "_next_action",
+            return_value={
+                "action": "finish",
+                "answer_zh": "肖仰华是教授、博导。",
+                "reason_code": "answer_grounded",
+            },
+        ) as planner:
+            answer = self.agent.read_explorer.explore(
+                "肖仰华有哪些工作？",
+                None,
+                dc.DBAnswer(kind="retrieve", narrative="尚未调查。"),
+                anchor_entities=["肖仰华"],
+                initial_action=initial_action,
+            )
+
+        self.assertIsNotNone(answer)
+        self.assertEqual(planner.call_count, 1)
+        first_action = next(
+            step for step in answer.steps
+            if step.get("action") == "search_values"
+        )
+        self.assertTrue(first_action["reused_router_plan"])
+        self.assertEqual(first_action["model_calls"], 0)
+
+    def test_query_budget_reserves_one_final_grounded_synthesis_call(self):
+        explorer = dc.AutonomousReadExplorer(
+            self.agent.nl2sql,
+            self.agent.rag,
+            self.agent.schema,
+            budget=dc.ReadExplorationBudget(
+                max_planner_steps=4,
+                max_tool_actions=3,
+                max_query_actions=1,
+                max_seconds=10.0,
+                synthesis_reserve_seconds=2.0,
+            ),
+        )
+        initial_action = {
+            "action": "search_values", "terms": ["肖仰华"],
+            "tables": [], "match_mode": "exact",
+            "reason_code": "evidence_missing",
+        }
+        sql_action = {
+            "action": "run_sql",
+            "sql": "SELECT title FROM scholars WHERE name = '肖仰华'",
+            "reason_code": "evidence_missing",
+        }
+        with mock.patch.object(
+            explorer, "_next_action", return_value=sql_action,
+        ) as planner, mock.patch.object(
+            explorer,
+            "_synthesize_answer",
+            return_value="数据库证据显示肖仰华是教授、博导。",
+        ) as synthesis:
+            answer = explorer.explore(
+                "肖仰华有哪些工作？",
+                None,
+                dc.DBAnswer(kind="retrieve", narrative="尚未调查。"),
+                anchor_entities=["肖仰华"],
+                initial_action=initial_action,
+            )
+
+        self.assertIsNotNone(answer)
+        self.assertIn("教授、博导", answer.narrative)
+        self.assertEqual(planner.call_count, 1)
+        synthesis.assert_called_once()
+        self.assertTrue(any(
+            step.get("reserved_synthesis") is True
+            and step.get("status") == "completed"
+            for step in answer.steps
+        ))
+
+    def test_explore_strategy_bypasses_disposable_primary_model_answer(self):
+        routed = dc.IntentResult(
+            intent="retrieve",
+            entities=["肖仰华"],
+            read_strategy="explore",
+            confidence=0.98,
+            source="model",
+        )
+        explored = dc.DBAnswer(
+            kind="retrieve",
+            narrative="自主调查完成。",
+            evidence=[{
+                "table": "scholars", "columns": ["name", "title"],
+                "row": ["肖仰华", "教授、博导"], "matched": "肖仰华",
+            }],
+        )
+        with mock.patch.object(self.agent.router, "classify", return_value=routed), \
+             mock.patch.object(self.agent.rag, "answer") as rag_answer, \
+             mock.patch.object(self.agent.nl2sql, "answer") as query_answer, \
+             mock.patch.object(self.agent.orchestrator, "answer") as compose_answer, \
+             mock.patch.object(
+                 self.agent.read_explorer, "explore", return_value=explored,
+             ) as explorer:
+            answer = self.agent.ask(
+                "请调查肖仰华的全部任职资料，必要时查看相关表。"
+            )
+
+        self.assertEqual(answer.narrative, "自主调查完成。")
+        rag_answer.assert_not_called()
+        query_answer.assert_not_called()
+        compose_answer.assert_not_called()
+        initial = explorer.call_args.args[2]
+        self.assertEqual(initial.narrative, "尚未执行数据调查。")
+        self.assertTrue(any(
+            step.get("tool") == "autonomous_read_dispatch"
+            for step in initial.steps
+        ))
+
+    def test_catalog_and_global_search_stay_inside_authorized_scope(self):
+        scoped = dc.DBQuillAgent(
+            db_path=str(self.path),
+            sample_rows=0,
+            allowed_tables=["scholars"],
+        )
+        catalog = scoped.read_explorer.tools.catalog()
+        self.assertIn("scholars", catalog)
+        self.assertNotIn("audit_mentions", catalog)
+        result = scoped.read_explorer.tools.search_values(
+            ["肖仰华"], tables=None, match_mode="exact",
+        )
+        self.assertEqual(
+            {item["table"] for item in result["evidence"]},
+            {"scholars"},
+        )
+
 
 class FourLayerProbeFixTests(unittest.TestCase):
     """2026-08-20 四层面探测修复回归：引号召回、SQL 关系门禁、支付口径提示、
