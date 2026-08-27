@@ -6,6 +6,11 @@ All notable user-facing changes are recorded here. Versions follow semantic vers
 
 ### Added
 
+- Added a dual-layer read response contract. Database investigations now lead
+  with a one- or two-sentence conversational answer and place up to four key
+  findings, coverage, and material open questions in a separate compact report.
+  Raw rows, SQL, evidence, and execution steps remain available as structured,
+  expandable audit data; explicit requests for technical detail are not clamped.
 - Added a model-led autonomous read investigation path for unfamiliar databases.
   The model sees the complete authorized table catalog and can direct global
   value searches, schema searches, row samples, relation inspection, natural-

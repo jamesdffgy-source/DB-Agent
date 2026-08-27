@@ -1,11 +1,11 @@
 {
   "schema_version": 5,
-  "recorded_at": "2026-08-27T15:52:07+08:00",
-  "source_fingerprint": "03ab1fce8d98c10fc802d2ab5309da9dbb7224d8d730c0494195328aafb04d7c",
+  "recorded_at": "2026-08-27T17:22:25+08:00",
+  "source_fingerprint": "cc332d150d7afee5f77ce5c1fc476f32d861996018806c0667e36a61bbc0ff4e",
   "controlled_file_count": 103,
   "python": "3.12.13",
   "test_command": "scripts/check_project.cmd",
-  "tests_passed": 456,
+  "tests_passed": 458,
   "evaluation": {
     "suite_version": "2026.08.17-v23",
     "offline_passed": 134,
@@ -52,5 +52,5 @@
     "credential_findings": 0,
     "redistributed_assets_verified": 2
   },
-  "summary": "Add model-led autonomous database exploration"
+  "summary": "Separate concise answers from investigation reports"
 }

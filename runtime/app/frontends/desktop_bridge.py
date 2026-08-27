@@ -1856,6 +1856,7 @@ def _db_answer_to_dict(ans: Any) -> dict:
             "dimension_plan": getattr(ans, "dimension_plan", None),
             "trend_plan": getattr(ans, "trend_plan", None),
             "relational_plan": getattr(ans, "relational_plan", None),
+            "report": getattr(ans, "report", None),
         }
 
 
@@ -2409,7 +2410,7 @@ def _db_session_display_payload(ans: Any) -> Optional[dict]:
     if datasets:
         payload["datasets"] = datasets
     for key in (
-        "evidence", "steps", "operation", "graph", "semantic", "calendar_plan",
+        "report", "evidence", "steps", "operation", "graph", "semantic", "calendar_plan",
         "metric_plan", "dimension_plan", "trend_plan", "relational_plan",
     ):
         if answer.get(key):

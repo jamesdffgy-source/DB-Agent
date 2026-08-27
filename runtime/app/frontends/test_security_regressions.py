@@ -161,7 +161,7 @@ class RuntimeDependencyTests(unittest.TestCase):
         self.assertIn('data-locale="en"', html)
         self.assertIn('<html lang="en">', html)
         self.assertIn('data-locale="en" class="active"', html)
-        self.assertIn('src="i18n.js?v=20260827-3"', html)
+        self.assertIn('src="i18n.js?v=20260827-4"', html)
         self.assertIn("window.DBQuillI18n.start()", html)
         self.assertIn("dbquill_locale", i18n)
         self.assertIn("return 'en';", i18n)
@@ -4681,6 +4681,11 @@ class BoundedReadExplorerTests(unittest.TestCase):
             },
             {
                 "action": "finish", "answer_zh": "肖仰华是教授、博导，并担任上海市数据科学重点实验室主任。",
+                "report": {
+                    "findings": ["现任教授、博士生导师", "担任重点实验室主任"],
+                    "scope": "覆盖已命中的人物档案与职务记录",
+                    "limitations": "未见完整历史任职时间线",
+                },
                 "reason_code": "answer_grounded",
             },
         ]
@@ -4703,12 +4708,55 @@ class BoundedReadExplorerTests(unittest.TestCase):
         self.assertIn("明确实体：“肖仰华”", retrieve.call_args.args[0])
         self.assertEqual(answer.kind, "retrieve")
         self.assertIn("实验室主任", answer.narrative)
+        self.assertEqual(len(answer.report["findings"]), 2)
+        self.assertIn("历史任职", answer.report["limitations"])
         self.assertEqual(answer.evidence, evidence)
         actions_seen = [
             step.get("action") for step in answer.steps
             if step.get("planner_step")
         ]
         self.assertEqual(actions_seen, ["inspect_schema", "retrieve", "finish"])
+
+    def test_synthesis_separates_concise_answer_from_bounded_report(self):
+        payload = {
+            "answer_zh": "肖仰华是教授和博士生导师。他还担任上海市数据科学重点实验室主任。第三句不应进入默认回答。",
+            "report": {
+                "findings": ["教授", "博导", "实验室主任", "期刊编委", "超出上限"],
+                "scope": "覆盖人物档案和职务记录",
+                "limitations": "缺少历史时间线",
+                "internal": "不应透传",
+            },
+            "evidence_sufficient": False,
+        }
+        with mock.patch.object(dc, "_llm_ask_json", return_value=payload) as ask:
+            output = self.agent.read_explorer._synthesize_answer(
+                "肖仰华有哪些工作？",
+                [{"source": "search_values", "kind": "value_search"}],
+                None,
+            )
+
+        self.assertNotIn("第三句", output["narrative"])
+        self.assertEqual(len(output["report"]["findings"]), 4)
+        self.assertNotIn("internal", output["report"])
+        prompt = ask.call_args.args[0]
+        self.assertIn("输出分为两层", prompt)
+        self.assertIn("默认精简模式", prompt)
+
+    def test_explicit_technical_detail_request_is_not_sentence_clamped(self):
+        detailed_answer = "结论一。结论二。结论三。"
+        with mock.patch.object(
+            dc,
+            "_llm_ask_json",
+            return_value={"answer_zh": detailed_answer, "report": {}},
+        ) as ask:
+            output = self.agent.read_explorer._synthesize_answer(
+                "请展开 SQL 和证据明细",
+                [{"source": "run_sql", "kind": "query"}],
+                None,
+            )
+
+        self.assertEqual(output["narrative"], detailed_answer)
+        self.assertIn("用户明确要求了技术明细", ask.call_args.args[0])
 
     def test_refined_question_cannot_drop_explicit_entity(self):
         actions = [
@@ -14135,6 +14183,7 @@ class ModelSettingsUiTests(AioHTTPTestCase):
             'id="sessCtxMenu"', "最近对话", "历史对话", "side-section-label",
             'data-act="rename"', 'data-act="del"', ">重命名<", ">删除<",
             'class="sec-details"', "tw-caret", "检索证据", "执行步骤",
+            'class="read-report"', "调查报告", "覆盖范围", "未确认项",
             # 2026-08-20 SQL 默认收起 + 操作计划条语义着色
             "（点击展开）", 'class="sql-block"', 'class="op-tag ok"', 'class="op-tag warn"',
             'class="op-tag danger"', ">只读</b>", ">写入</b>", ">自动选择</b>", "statusLabels.executed",
@@ -14299,6 +14348,11 @@ class NaturalFlowFixTests(unittest.TestCase):
         answer = dc.DBAnswer(
             kind="schema", narrative="当前数据库共有 12 张表。",
             columns=["表名", "行数"], rows=rows,
+            report={
+                "findings": ["一共 12 张表"],
+                "scope": "当前已接入的数据库",
+                "limitations": "",
+            },
         )
 
         model_content = desktop_bridge._db_history_content(answer)
@@ -14308,6 +14362,7 @@ class NaturalFlowFixTests(unittest.TestCase):
         self.assertIsNotNone(snapshot)
         self.assertEqual(snapshot["row_count"], 12)
         self.assertEqual(snapshot["rows"], rows)
+        self.assertEqual(snapshot["report"]["findings"], ["一共 12 张表"])
         self.assertFalse(snapshot["snapshot_limited"])
 
         large_answer = dc.DBAnswer(

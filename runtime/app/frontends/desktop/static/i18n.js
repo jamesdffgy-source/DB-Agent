@@ -334,7 +334,11 @@
     '编辑': 'Edit',
     '未执行过': 'Never run',
     '日志加载失败': 'Failed to load logs',
-    '脱敏运行元数据；完整事件请查看审计记录': 'Redacted execution metadata; see Audit for the complete event.'
+    '脱敏运行元数据；完整事件请查看审计记录': 'Redacted execution metadata; see Audit for the complete event.',
+    '调查报告': 'Investigation report',
+    '结论与证据分层呈现': 'Conclusions and evidence are shown separately',
+    '覆盖范围': 'Coverage',
+    '未确认项': 'Open questions'
   });
 
   const DYNAMIC_ENGLISH = Object.freeze([

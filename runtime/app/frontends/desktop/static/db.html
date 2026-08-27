@@ -221,6 +221,21 @@
   .narrative { font-size: 15.5px; line-height: 1.75; color: var(--text); }
   .narrative .hl { color: var(--accent-1); font-weight: 700; }
 
+  .read-report {
+    margin-top: 15px; padding: 14px 16px;
+    border: 1px solid var(--line); border-radius: 14px;
+    background: linear-gradient(135deg, rgba(34,211,238,.055), rgba(167,139,250,.045));
+  }
+  .read-report-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .read-report-head strong { font-size: 12px; letter-spacing: .12em; color: var(--accent-1); }
+  .read-report-head span { font-size: 11px; color: var(--text-3); }
+  .read-report-findings { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 7px; }
+  .read-report-findings li { position: relative; padding-left: 16px; font-size: 13px; line-height: 1.55; color: var(--text); }
+  .read-report-findings li::before { content: ""; position: absolute; left: 1px; top: .65em; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-2); }
+  .read-report-meta { display: grid; gap: 7px; margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .read-report-meta div { font-size: 12px; line-height: 1.55; color: var(--text-2); }
+  .read-report-meta b { color: var(--text-3); font-weight: 600; margin-right: 7px; }
+
   .sec { margin-top: 20px; }
   .sec-label {
     font-size: 10.5px; letter-spacing: .22em; text-transform: uppercase;
@@ -1087,7 +1102,7 @@
 </div>
 
 <script src="vendor/echarts.min.js"></script>
-<script src="i18n.js?v=20260827-3"></script>
+<script src="i18n.js?v=20260827-4"></script>
 <script>
 'use strict';
 /* ================= DBQuill 前端逻辑 ================= */
@@ -1867,6 +1882,29 @@ function addAnswerCard(res, sourceDbId = state.dbId, historyMode = false) {
     (res.elapsed != null ? '<span class="kind-tag">' + Number(res.elapsed).toFixed(1) + 's</span>' : '') + '</div>';
   if (res.narrative) inner += '<div class="narrative">' + esc(res.narrative).replace(/\*\*(.+?)\*\*/g, '<span class="hl">$1</span>').replace(/\n/g, '<br>') + '</div>';
   if (res.error) inner += '<div class="error-box" style="margin-top:14px">' + esc(res.error) + '</div>';
+  const report = res.report && typeof res.report === 'object' ? res.report : null;
+  if (report) {
+    const findings = Array.isArray(report.findings)
+      ? report.findings.filter(item => String(item || '').trim()).slice(0, 4)
+      : [];
+    const scope = String(report.scope || '').trim();
+    const limitations = String(report.limitations || '').trim();
+    if (findings.length || scope || limitations) {
+      inner += '<section class="read-report"><div class="read-report-head"><strong>调查报告</strong><span>结论与证据分层呈现</span></div>';
+      if (findings.length) {
+        inner += '<ul class="read-report-findings">';
+        findings.forEach(item => { inner += '<li>' + esc(String(item).slice(0, 300)) + '</li>'; });
+        inner += '</ul>';
+      }
+      if (scope || limitations) {
+        inner += '<div class="read-report-meta">' +
+          (scope ? '<div><b>覆盖范围</b>' + esc(scope.slice(0, 300)) + '</div>' : '') +
+          (limitations ? '<div><b>未确认项</b>' + esc(limitations.slice(0, 300)) + '</div>' : '') +
+          '</div>';
+      }
+      inner += '</section>';
+    }
+  }
   // NL-to-Database 操作计划：自然语言如何被解释、会影响什么，一眼可审计。
   // 值按语义着色：只读/自动选择/已执行=绿，写入/等待确认或补充/中风险=黄，失败/取消/高风险=红。
   if (res.operation) {
