@@ -14,6 +14,16 @@ All notable user-facing changes are recorded here. Versions follow semantic vers
 
 ### Fixed
 
+- Entity-centric questions now retrieve exact names before broad terms, scan
+  descriptive columns independently of physical column order, and exclude
+  unrelated records once an exact entity has been found.
+- Short and chained follow-ups such as `是什么`, `那他的研究方向呢`, and
+  `证据呢` now inherit the most recent complete user topic. Empty NL-to-SQL
+  results can fall back to bounded cross-table evidence only when the original
+  user language contains an exact entity.
+- Multi-part entity evidence questions no longer guess a cross-table join merely
+  because they ask for status, known/unknown fields, and evidence sufficiency.
+  Null and `unresolved` fields are reported as missing evidence rather than facts.
 - Replaced renderer-side Base64/JSON uploads with bounded multipart streaming.
   Large databases no longer require several full in-memory copies in the desktop
   page; incomplete and over-limit uploads are discarded before publication.

@@ -15835,7 +15835,10 @@ class RagRetriever:
         "规则：\n"
         "1. 只依据证据回答；证据不足以回答时如实说明，不要编造数据\n"
         "2. 可适当总结/归纳多条证据\n"
-        "3. 只输出一个 JSON 对象：{{\"answer_zh\": \"回答内容\"}}\n\n"
+        "3. <NULL>、空值、unresolved 表示该字段未补全/尚未解析，不得当作已知信息\n"
+        "4. 若用户要求区分已知、未知或证据充分性，必须逐项回答；"
+        "university 等归属字段不能推断为具体岗位或职务\n"
+        "5. 只输出一个 JSON 对象：{{\"answer_zh\": \"回答内容\"}}\n\n"
         "证据：\n{evidence}\n\n"
         "用户问题：{question}\n\n"
         "输出 JSON："
@@ -15881,36 +15884,97 @@ class RagRetriever:
 
     # -- 关键词提取（引号术语优先，中文 2-gram 补足，去停用词） --
     _QUOTED_TERM_RE = re.compile(r"[“\"『「']([^”\"』」']{1,40})[”\"』」']")
+    _PERSON_ROLE_RE = re.compile(
+        r"([\u4e00-\u9fff·]{2,12}?)(?:老师|教授|导师|先生|女士|博士)"
+    )
+    _ENTITY_TOPIC_RE = re.compile(
+        r"([\u4e00-\u9fff·]{2,12}?)(?:的)?(?:工作|研究状态|资料状态|补全状态|"
+        r"研究方向|研究领域|简介|资料|信息|"
+        r"履历|成果|论文|项目)(?:是什么|有哪些|怎么样|如何|呢|吗|"
+        r"[？?。.，,；;：:]|$)"
+    )
+    _ENTITY_PREFIX_RE = re.compile(r"^(?:请问|我想问|想了解|帮我查(?:一下)?|查一下)")
+    _ENTITY_EVIDENCE_RE = re.compile(
+        r"(证据|已知|未知|是否充分|足够证明|资料是否|信息是否|"
+        r"研究状态|资料状态|补全状态|unresolved|null)",
+        re.IGNORECASE,
+    )
+    _ENTITY_STRUCTURED_QUERY_RE = re.compile(
+        r"(统计|计算|多少|数量|排名|排序|前\s*\d+|最近\s*\d+|"
+        r"count|sum|avg|average|max|min|group\s+by|order\s+by)",
+        re.IGNORECASE,
+    )
+
+    def _entity_terms(self, question: str, limit: int = 4) -> List[str]:
+        """Extract explicit subjects before broad lexical n-grams.
+
+        These terms are used only as bounded LIKE evidence probes. They never
+        become identifiers or SQL fragments, so a false positive can reduce
+        recall quality but cannot bypass database safety checks.
+        """
+        text = self._ENTITY_PREFIX_RE.sub("", str(question or "").strip())
+        out: List[str] = []
+
+        def add(value: str) -> None:
+            token = str(value or "").strip(" ，,。.!！?？:：;；")
+            if len(token) < 2 or token in self._STOPWORDS or token in out:
+                return
+            out.append(token)
+
+        for span in self._QUOTED_TERM_RE.findall(text):
+            add(span)
+        for pattern in (self._PERSON_ROLE_RE, self._ENTITY_TOPIC_RE):
+            for match in pattern.finditer(text):
+                add(match.group(1))
+                if len(out) >= limit:
+                    return out
+        return out
 
     def _keywords(self, question: str, limit: int = 8) -> List[str]:
         out, seen = [], set()
 
-        def _add(token: str) -> None:
+        def _add(token: str, explicit: bool = False) -> None:
             if token in seen or len(token) < 2:
                 return
-            if any(s in token for s in self._STOPWORDS):
+            if not explicit and (
+                token in self._STOPWORDS
+                or any(len(stopword) > 1 and stopword in token for stopword in self._STOPWORDS)
+            ):
                 return
             seen.add(token)
             out.append(token)
 
-        # 引号内术语是用户显式指定的检索目标，优先于位置性 n-gram 召回
+        # 人名/显式主题优先；否则通用词会在靠前表中提前耗尽证据预算。
+        for term in self._entity_terms(question):
+            if len(out) >= limit:
+                break
+            _add(term, explicit=True)
+        # 引号内术语是用户显式指定的检索目标，同样不受通用停用词拆分影响。
         for span in self._QUOTED_TERM_RE.findall(question or ""):
             for token in re.findall(r"[\w\u4e00-\u9fff]+", span):
                 if len(out) >= limit:
                     break
-                _add(token)
+                _add(token, explicit=True)
         chunks = re.findall(r"[\u4e00-\u9fff]{2,}", question)
         grams = []
         for ch in chunks:
-            for i in range(len(ch) - 1):
-                grams.append(ch[i:i + 2])
-            for i in range(len(ch) - 2):
-                grams.append(ch[i:i + 3])
+            # 长片段先于二元词，优先保留可区分的人名/业务实体。
+            for width in range(min(4, len(ch)), 1, -1):
+                for i in range(len(ch) - width + 1):
+                    grams.append(ch[i:i + width])
         for g in grams:
             if len(out) >= limit:
                 break
             _add(g)
         return out
+
+    def prefers_entity_evidence(self, question: str) -> bool:
+        """明确实体的资料状态/证据问题应先读记录，而不是猜 JOIN。"""
+        return bool(
+            self._entity_terms(question)
+            and self._ENTITY_EVIDENCE_RE.search(question or "")
+            and not self._ENTITY_STRUCTURED_QUERY_RE.search(question or "")
+        )
 
     def _escape_like(self, kw: str) -> str:
         return kw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -15918,7 +15982,7 @@ class RagRetriever:
     # -- 召回：FTS/LIKE 统一走 LIKE 扫描（小库友好；FTS 表同样支持列 LIKE） --
     @staticmethod
     def _text_scan_columns(tbl) -> List[str]:
-        """优先扫描真正的文本列；避免前 3 个非 BLOB 列恰好是 id/日期时漏掉备注等 TEXT 列。"""
+        """Prioritize identity and descriptive text instead of physical order."""
         declared_text = []
         fallback = []
         for column in tbl.columns:
@@ -15929,7 +15993,23 @@ class RagRetriever:
                 declared_text.append(column.name)
             else:
                 fallback.append(column.name)
-        return (declared_text + fallback)[:3]
+        priorities = (
+            "name", "title", "label", "subject", "person", "advisor",
+            "research", "summary", "description", "content", "text",
+            "abstract", "keyword", "note", "profile", "bio", "work",
+            "project", "status", "university", "department",
+        )
+
+        def rank(name: str) -> tuple[int, int]:
+            lowered = name.casefold()
+            for index, signal in enumerate(priorities):
+                if lowered == signal or signal in lowered:
+                    return index, len(lowered)
+            return len(priorities), len(lowered)
+
+        declared_text.sort(key=rank)
+        fallback.sort(key=rank)
+        return (declared_text + fallback)[:8]
 
     def _recall(self, keywords: List[str]) -> List[dict]:
         evidence: List[dict] = []
@@ -15948,10 +16028,8 @@ class RagRetriever:
             )
             cur = conn.cursor()
             budget = self.max_like_queries
+            scan_plan = []
             for tname, tbl in self.schema.tables.items():
-                if len(evidence) >= self.max_evidence or budget <= 0:
-                    break
-                # 优先取 3 个文本列参与 LIKE（BLOB 列跳过）
                 text_cols = self._text_scan_columns(tbl)
                 if not text_cols:
                     continue
@@ -15959,10 +16037,17 @@ class RagRetriever:
                 projection = ", ".join(
                     '"' + name.replace('"', '""') + '"' for name in col_names
                 )
-                for col in text_cols:
+                scan_plan.append((tname, text_cols, col_names, projection))
+            seen_rows = set()
+            # Keyword-first traversal makes a specific entity search every table
+            # before generic terms can fill the bounded evidence window.
+            for kw in keywords:
+                if len(evidence) >= self.max_evidence or budget <= 0:
+                    break
+                for tname, text_cols, col_names, projection in scan_plan:
                     if len(evidence) >= self.max_evidence or budget <= 0:
                         break
-                    for kw in keywords:
+                    for col in text_cols:
                         if len(evidence) >= self.max_evidence or budget <= 0:
                             break
                         budget -= 1
@@ -15973,10 +16058,18 @@ class RagRetriever:
                             )
                             cur.execute(sql, (f"%{self._escape_like(kw)}%",))
                             for row in cur.fetchall():
+                                row_key = (tname, tuple(repr(value) for value in row))
+                                if row_key in seen_rows:
+                                    continue
+                                seen_rows.add(row_key)
                                 evidence.append({
                                     "table": tname,
                                     "columns": col_names,
-                                    "row": [str(v)[:40] if not isinstance(v, bytes) else f"<blob {len(v)}B>" for v in row],
+                                    "row": [
+                                        "<NULL>" if v is None
+                                        else (f"<blob {len(v)}B>" if isinstance(v, bytes) else str(v)[:40])
+                                        for v in row
+                                    ],
                                     "matched": kw,
                                 })
                         except sqlite3.Error:
@@ -16014,6 +16107,18 @@ class RagRetriever:
     def answer(self, question: str, history: Optional[list] = None) -> DBAnswer:
         kws = self._keywords(question)
         ev = self._recall(kws) if kws else []
+        entity_keys = {
+            term.casefold() for term in self._entity_terms(question)
+        }
+        if entity_keys:
+            exact_entity_evidence = [
+                item for item in ev
+                if str(item.get("matched") or "").casefold() in entity_keys
+            ]
+            # 明确实体已命中时，不把“工作/证据/研究”等泛词命中的
+            # 其他人物混入上下文。跨表关联记录应由关系计划器显式解析。
+            if exact_entity_evidence:
+                ev = exact_entity_evidence
         if not ev:
             overview = self._business_overview(question, history)
             if overview is not None:
@@ -16181,6 +16286,14 @@ class NaturalLanguageDatabasePlanner:
     _CLEAR_NEW_READ_RE = re.compile(
         r"^(查询|查找|统计|计算|列出|展示|显示|介绍|有哪些表|一共|总共|多少|哪个|"
         r"哪些|谁|什么|怎么|如何|为什么|show\s+tables|select)",
+        re.IGNORECASE,
+    )
+    _CONTEXTUAL_FOLLOWUP_RE = re.compile(
+        r"^(?:那|那么)?\s*(?:这|这个|这个人|他|她|它)?\s*(?:的)?\s*"
+        r"(?:工作|研究|研究方向|信息|资料|证据|结果|状态|"
+        r"单位|学校|职务|岗位|论文|项目|详情)?\s*(?:具体)?\s*"
+        r"(?:是什么|做什么|怎么样|如何|怎么回事|为什么|有哪些|呢|吗)"
+        r"[？?。！!]*$",
         re.IGNORECASE,
     )
     _DERIVED_METRIC_RE = re.compile(
@@ -16682,9 +16795,11 @@ class NaturalLanguageDatabasePlanner:
         clarification: Optional[dict] = None,
     ) -> str:
         """把对澄清问题的短回复并回原指令；完整的新请求保持原样。"""
+        stripped = question.strip()
+        contextual_followup = bool(self._CONTEXTUAL_FOLLOWUP_RE.fullmatch(stripped))
         if (not history and not clarification) or len(question) > 200 \
-                or self._CLEAR_NEW_READ_RE.search(question.strip()) \
-                or self._COMPLETE_WRITE_RE.search(question.strip()) \
+                or (self._CLEAR_NEW_READ_RE.search(stripped) and not contextual_followup) \
+                or self._COMPLETE_WRITE_RE.search(stripped) \
                 or re.search(
                     r"(目标表|对象名称|目标字段|筛选条件|修改后的值|新增内容|字段定义|结构变更定义|"
                     r"关联条件|指标口径|聚合字段|时间字段|时间范围|时间粒度|维度层级|业务日历|"
@@ -16717,19 +16832,29 @@ class NaturalLanguageDatabasePlanner:
             }
             if original and missing in labels:
                 return f"{original.rstrip('？?。；;')}；{labels[missing]}：{question.strip()}"
-        if self._NEW_REQUEST_RE.search(question.strip()):
+        if self._NEW_REQUEST_RE.search(stripped) and not contextual_followup:
             return question
         last_assistant = next(
             (str(item.get("content") or "") for item in reversed(history) if item.get("role") == "assistant"),
             "",
         )
-        previous_user = next(
-            (str(item.get("content") or "") for item in reversed(history) if item.get("role") == "user"),
-            "",
-        )
+        previous_users = [
+            str(item.get("content") or "").strip()
+            for item in reversed(history)
+            if item.get("role") == "user" and str(item.get("content") or "").strip()
+        ]
+        previous_user = previous_users[0] if previous_users else ""
         if not last_assistant or not previous_user:
             return question
-        stripped = question.strip()
+        if contextual_followup and "请先补充" not in last_assistant:
+            context_anchor = next(
+                (
+                    item for item in previous_users
+                    if not self._CONTEXTUAL_FOLLOWUP_RE.fullmatch(item)
+                ),
+                previous_user,
+            )
+            return f"{context_anchor.rstrip('？?。；;')}；追问：{stripped}"
         if previous_user and (
             self._USER_CORRECTION_RE.match(stripped)
             or (self._RERUN_REQUEST_RE.search(stripped) and len(stripped) <= 60)
@@ -17373,7 +17498,9 @@ class IntentRouter:
         "- query：需要计算/统计/筛选/排序等具体数据操作（COUNT/AVG/JOIN/LIMIT 等）；"
         "列出或查找论文、文献、文档、资料等列表也属于 query（需要真实查询数据库）；"
         "引用上一轮结果中的具体条目（如“第一篇”“其中 2025 年那篇”）要求其字段详情，也属于 query\n"
-        "- retrieve：需要描述性内容/查资料/了解知识（答案蕴含在记录文本中，且不要求列举清单）\n"
+        "- retrieve：需要描述性内容/查资料/了解知识（答案蕴含在记录文本中，且不要求列举清单）；"
+        "询问某个明确实体的资料状态、哪些已知/未知、证据是否充分，"
+        "也属于 retrieve，不要因为问题包含多个方面就猜测跨表 JOIN\n"
         "- compose：需要多步组合推理（先查数，再结合检索/规则得出结论）\n"
         "- write：用户明确要求修改/删除/新增数据或建表/改表结构（更新/插入/删除/创建表/删除表等）。"
         "典型表达：把…改成…、将…更新为…、删除…、新增一条…、创建…表、给…添加一列。"
@@ -18535,6 +18662,17 @@ class DBQuillAgent:
         if semantic_context:
             schema_context += "\n\n业务语义目录：\n" + semantic_context
         ir = self.router.classify(execution_question, schema_context, history=history)
+        if ir.intent in {"query", "compose"} \
+                and self.rag.prefers_entity_evidence(resolved_question):
+            ir = IntentResult(
+                intent="retrieve",
+                confidence=max(ir.confidence, 0.95),
+                reasoning=(
+                    "明确实体的资料状态/证据充分性问题优先使用跨表证据检索；"
+                    "不从多问句表面形式猜测 JOIN"
+                ),
+                source="deterministic",
+            )
         operation = self.operation_planner.from_intent(resolved_question, ir)
         if operation.mode == "write" and isinstance(self.connector, RemoteDBConnector) \
                 and not self.connector.write_enabled:
@@ -18676,6 +18814,48 @@ class DBQuillAgent:
             ans = self.write_executor.prepare(execution_question, history=history)
         else:  # retrieve / 降级
             ans = self.rag.answer(execution_question, history=history)
+        # NL2SQL 可能在合理但错误的候选表上得到空集。只对显式实体问题
+        # 执行一次受限的跨表证据回退；没有精确实体命中时保留原空结果。
+        if ir.intent == "query" and ans.kind == "query" and not ans.rows and not ans.datasets:
+            # 只从用户语言（可包已验证的短追问继承）提取实体。
+            # semantic.resolved_question 含物理字段注释，不得反向当成用户实体。
+            entity_terms = self.rag._entity_terms(resolved_question)
+            if entity_terms:
+                fallback = self.rag.answer(resolved_question, history=history)
+                entity_keys = {term.casefold() for term in entity_terms}
+                exact_evidence = [
+                    item for item in (fallback.evidence or [])
+                    if str(item.get("matched") or "").casefold() in entity_keys
+                ]
+                if exact_evidence:
+                    fallback.steps = [{
+                        "tool": "empty_query_entity_fallback",
+                        "version": "1.0",
+                        "status": "executed",
+                        "entity_terms": entity_terms,
+                    }] + (fallback.steps or [])
+                    operation.action = "retrieve"
+                    operation.target_tables = list(dict.fromkeys(
+                        str(item.get("table") or "") for item in exact_evidence
+                        if item.get("table")
+                    ))
+                    operation.reasoning = (
+                        f"{operation.reasoning or ''}；SQL 空结果后按明确实体跨表检索"
+                    ).strip("；")
+                    ans = fallback
+        if ans.kind == "retrieve" and ans.evidence and not operation.target_tables:
+            entity_keys = {
+                term.casefold() for term in self.rag._entity_terms(resolved_question)
+            }
+            exact_tables = list(dict.fromkeys(
+                str(item.get("table") or "") for item in ans.evidence
+                if item.get("table") and (
+                    not entity_keys
+                    or str(item.get("matched") or "").casefold() in entity_keys
+                )
+            ))
+            if exact_tables:
+                operation.target_tables = exact_tables
         operation = self.operation_planner.enrich(operation, ans)
         ans.operation = operation.as_dict()
         ans.semantic = semantic.as_dict() if semantic.matches else None

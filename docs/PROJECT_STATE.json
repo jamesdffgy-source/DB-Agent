@@ -1,11 +1,11 @@
 {
   "schema_version": 5,
-  "recorded_at": "2026-08-27T11:56:42+08:00",
-  "source_fingerprint": "338a9a46880e431983aa14c8f2811f4cbb6b1a1ab263ea4faa9b803e1312c448",
+  "recorded_at": "2026-08-27T12:33:08+08:00",
+  "source_fingerprint": "cdb09998083ebaeb8b9ed0a0483cc842b85f72897fe46d483b5dfe5c5e1c6a77",
   "controlled_file_count": 103,
   "python": "3.12.13",
   "test_command": "scripts/check_project.cmd",
-  "tests_passed": 424,
+  "tests_passed": 430,
   "evaluation": {
     "suite_version": "2026.08.17-v23",
     "offline_passed": 134,
@@ -52,5 +52,5 @@
     "credential_findings": 0,
     "redistributed_assets_verified": 2
   },
-  "summary": "Prevent stale bridge upload protocol mismatch and preserve UTF-8 filenames"
+  "summary": "Entity-first retrieval, executable follow-up context, and grounded entity-evidence fallback"
 }

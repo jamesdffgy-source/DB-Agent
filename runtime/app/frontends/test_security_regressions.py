@@ -13880,6 +13880,173 @@ class GroupedMetricsAndCancellationRegressionTests(unittest.TestCase):
             desktop_bridge._DB_RUN_CANCEL_EVENTS.pop(run_id, None)
 
 
+class EntityRetrievalAndMemoryRegressionTests(unittest.TestCase):
+    """实体跨表召回和短追问执行记忆回归。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "advisor.db"
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE advisor_profiles (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT,
+                    university TEXT,
+                    title TEXT,
+                    research_summary TEXT
+                );
+                CREATE TABLE demo_research (
+                    id INTEGER PRIMARY KEY,
+                    roster_id INTEGER,
+                    name TEXT,
+                    university TEXT,
+                    department TEXT,
+                    research_direction TEXT,
+                    evidence_note TEXT,
+                    status TEXT
+                );
+                """
+            )
+            conn.executemany(
+                "INSERT INTO advisor_profiles(name, university, title, research_summary) "
+                "VALUES (?, ?, ?, ?)",
+                [
+                    ("徐老师", "测试大学", "教授", "日常工作"),
+                    ("曹之老师", "测试大学", "教授", "学生工作"),
+                ],
+            )
+            conn.execute(
+                "INSERT INTO demo_research("
+                "id, roster_id, name, university, department, research_direction, evidence_note, status"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (22298, 77600, "肖仰华", "复旦大学", "", None, None, "unresolved"),
+            )
+            conn.commit()
+        self.agent = dc.DBQuillAgent(db_path=str(self.path), sample_rows=3)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_person_entity_is_first_keyword_and_reaches_later_table(self):
+        keywords = self.agent.rag._keywords("肖仰华老师的工作是什么")
+        self.assertEqual(keywords[0], "肖仰华")
+        evidence = self.agent.rag._recall(keywords)
+        exact = [item for item in evidence if item.get("matched") == "肖仰华"]
+        self.assertTrue(exact)
+        self.assertEqual(exact[0]["table"], "demo_research")
+        self.assertIn("unresolved", exact[0]["row"])
+
+    def test_descriptive_columns_are_not_lost_to_physical_column_order(self):
+        profile = self.agent.schema.tables["advisor_profiles"]
+        research = self.agent.schema.tables["demo_research"]
+        self.assertIn("research_summary", self.agent.rag._text_scan_columns(profile))
+        self.assertIn("research_direction", self.agent.rag._text_scan_columns(research))
+
+    def test_short_followup_inherits_previous_subject(self):
+        resolved = self.agent.operation_planner.resolve_followup(
+            "是什么",
+            [
+                {"role": "user", "content": "肖仰华工作"},
+                {"role": "assistant", "content": "未查到结果"},
+            ],
+        )
+        self.assertIn("肖仰华工作", resolved)
+        self.assertIn("追问：是什么", resolved)
+        self.assertEqual(self.agent.rag._entity_terms(resolved)[0], "肖仰华")
+
+    def test_chained_pronoun_followup_uses_last_complete_topic_anchor(self):
+        history = [
+            {"role": "user", "content": "肖仰华老师的工作是什么"},
+            {"role": "assistant", "content": "只知道关联高校，具体岗位未说明"},
+            {"role": "user", "content": "是什么"},
+            {"role": "assistant", "content": "具体职务信息未说明"},
+        ]
+        resolved = self.agent.operation_planner.resolve_followup(
+            "那他的研究方向呢",
+            history,
+        )
+        self.assertTrue(resolved.startswith("肖仰华老师的工作是什么"))
+        self.assertIn("追问：那他的研究方向呢", resolved)
+        self.assertEqual(self.agent.rag._entity_terms(resolved)[0], "肖仰华")
+        evidence_followup = self.agent.operation_planner.resolve_followup("证据呢", history)
+        self.assertTrue(evidence_followup.startswith("肖仰华老师的工作是什么"))
+        self.assertIn("追问：证据呢", evidence_followup)
+
+    def test_empty_sql_result_falls_back_only_to_exact_entity_evidence(self):
+        empty = dc.DBAnswer(
+            kind="query",
+            narrative="查询完成，返回 0 行。",
+            sql="SELECT name FROM advisor_profiles WHERE name = '肖仰华'",
+            columns=["name"],
+            rows=[],
+        )
+        router_result = dc.IntentResult(
+            intent="query", confidence=0.95, reasoning="要求查询具体人物", source="model",
+        )
+        with mock.patch.object(self.agent.router, "classify", return_value=router_result), \
+             mock.patch.object(self.agent.multi_metric_query, "answer", return_value=None), \
+             mock.patch.object(self.agent.trend_query, "answer", return_value=None), \
+             mock.patch.object(self.agent.dimension_query, "answer", return_value=None), \
+             mock.patch.object(self.agent.calendar_query, "answer", return_value=None), \
+             mock.patch.object(self.agent.nl2sql, "answer", return_value=empty), \
+             mock.patch.object(
+                 dc,
+                 "_llm_ask_json",
+                 return_value={
+                     "answer_zh": "数据库中有肖仰华的待研究记录，但工作信息尚未补全。"
+                 },
+             ):
+            answer = self.agent.ask("肖仰华的工作是什么")
+
+        self.assertEqual(answer.kind, "retrieve")
+        self.assertEqual(answer.operation["action"], "retrieve")
+        self.assertEqual(answer.operation["target_tables"], ["demo_research"])
+        self.assertTrue(any(
+            item.get("tool") == "empty_query_entity_fallback" for item in answer.steps
+        ))
+        self.assertTrue(any(
+            item.get("table") == "demo_research" and item.get("matched") == "肖仰华"
+            for item in answer.evidence
+        ))
+        self.assertTrue(all(item.get("matched") == "肖仰华" for item in answer.evidence))
+        self.assertIn("尚未补全", answer.narrative)
+
+    def test_entity_evidence_question_does_not_guess_a_cross_table_join(self):
+        model_misroute = dc.IntentResult(
+            intent="query", confidence=0.9, reasoning="需要查询并核验", source="model",
+        )
+        with mock.patch.object(self.agent.router, "classify", return_value=model_misroute), \
+             mock.patch.object(
+                 self.agent.nl2sql,
+                 "answer",
+                 side_effect=AssertionError("实体证据问题不应猜测 JOIN"),
+             ), \
+             mock.patch.object(
+                 dc,
+                 "_llm_ask_json",
+                 return_value={
+                     "answer_zh": (
+                         "已知：记录中的高校是复旦大学，状态为 unresolved。"
+                         "未知：工作岗位、研究方向和证据均为空，因此证据不足。"
+                     )
+                 },
+             ):
+            answer = self.agent.ask(
+                "肖仰华的研究状态是什么，数据库里是否有足够证据"
+                "说明他的工作？请区分已知和未知"
+            )
+
+        self.assertEqual(answer.kind, "retrieve")
+        self.assertEqual(answer.operation["target_tables"], ["demo_research"])
+        self.assertEqual(
+            next(step for step in answer.steps if step.get("tool") == "intent")["source"],
+            "deterministic",
+        )
+        self.assertIn("证据不足", answer.narrative)
+        self.assertIn("<NULL>", answer.evidence[0]["row"])
+
+
 class LauncherPortSelectionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
