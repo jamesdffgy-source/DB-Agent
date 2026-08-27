@@ -249,12 +249,20 @@ def run_javascript_check() -> None:
     node = shutil.which("node")
     if not node:
         fail("未找到 Node.js，无法执行前端 JavaScript 语法门禁")
-    html = (ROOT / "runtime/app/frontends/desktop/static/db.html").read_text(encoding="utf-8")
+    static_root = ROOT / "runtime/app/frontends/desktop/static"
+    html = (static_root / "db.html").read_text(encoding="utf-8")
     scripts = re.findall(r"<script[^>]*>([\s\S]*?)</script>", html, flags=re.IGNORECASE)
+    sources = [
+        (f"db.html inline script {index}", source)
+        for index, source in enumerate(scripts, start=1)
+        if source.strip()
+    ]
+    sources.extend(
+        (path.name, path.read_text(encoding="utf-8"))
+        for path in sorted(static_root.glob("*.js"))
+    )
     checked = 0
-    for source in scripts:
-        if not source.strip():
-            continue
+    for label, source in sources:
         result = subprocess.run(
             [node, "--check"],
             input=source,
@@ -266,10 +274,10 @@ def run_javascript_check() -> None:
         )
         if result.returncode != 0:
             details = (result.stderr or result.stdout).strip()
-            fail(f"前端 JavaScript 语法检查失败: {details}")
+            fail(f"前端 JavaScript 语法检查失败（{label}）: {details}")
         checked += 1
     if checked == 0:
-        fail("db.html 中没有发现可检查的内联 JavaScript")
+        fail("没有发现可检查的项目前端 JavaScript")
 
 
 def load_state() -> dict:

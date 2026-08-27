@@ -454,7 +454,7 @@
   .log-item b { color: var(--text); font-weight: 600; }
   .empty-tip { color: var(--text-3); font-size: 12.5px; text-align: center; padding: 26px 0; }
 </style>
-<link rel="stylesheet" href="calm-theme.css?v=20260826-4">
+<link rel="stylesheet" href="calm-theme.css?v=20260827-5">
 </head>
 <body>
 <div class="bg-glow"></div>
@@ -464,6 +464,10 @@
   <header class="topbar">
     <div class="brand">
       <div class="brand-wordmark">DBQUILL</div>
+      <div class="locale-switch" data-i18n-control role="group" aria-label="语言">
+        <button type="button" data-locale="zh-CN" aria-pressed="true" title="已选择中文">中</button>
+        <button type="button" data-locale="en" aria-pressed="false" title="Switch to English">EN</button>
+      </div>
     </div>
     <nav class="nav-tabs" id="navTabs">
       <button class="nav-tab active" data-view="sessions">会话</button>
@@ -1071,11 +1075,17 @@
 </div>
 
 <script src="vendor/echarts.min.js"></script>
+<script src="i18n.js?v=20260827-1"></script>
 <script>
 'use strict';
 /* ================= DBQuill 前端逻辑 ================= */
 const $ = (s, el) => (el || document).querySelector(s);
 const $$ = (s, el) => [...(el || document).querySelectorAll(s)];
+const uiT = value => window.DBQuillI18n ? window.DBQuillI18n.t(value) : String(value == null ? '' : value);
+const uiConfirm = message => window.confirm(uiT(message));
+const uiPrompt = (message, initialValue = '') => window.prompt(uiT(message), initialValue);
+
+if (window.DBQuillI18n) window.DBQuillI18n.start();
 
 const legacySessionId = localStorage.getItem('dbagent_sid') || '';
 const legacyModelProfile = localStorage.getItem('dbagent_model_profile') || '';
@@ -1120,7 +1130,7 @@ const _KIND_LABELS = { sqlite: 'SQLite', csv: 'CSV', excel: 'Excel', mysql: 'MyS
 function kindLabel(k) { return _KIND_LABELS[k] || String(k == null ? '' : k); }
 function toast(msg, ms = 2600) {
   const t = $('#toast');
-  t.textContent = msg;
+  t.textContent = uiT(msg);
   t.classList.add('show');
   clearTimeout(t._h);
   t._h = setTimeout(() => t.classList.remove('show'), ms);
@@ -1176,7 +1186,8 @@ async function loadAccessContext() {
   applyAccessContext(payload.access || {});
 }
 function fmtNum(v) {
-  if (typeof v === 'number') return Number.isInteger(v) ? v.toLocaleString('zh-CN') : v.toLocaleString('zh-CN', { maximumFractionDigits: 4 });
+  const locale = window.DBQuillI18n && window.DBQuillI18n.locale === 'en' ? 'en-US' : 'zh-CN';
+  if (typeof v === 'number') return Number.isInteger(v) ? v.toLocaleString(locale) : v.toLocaleString(locale, { maximumFractionDigits: 4 });
   return String(v);
 }
 
@@ -1249,14 +1260,14 @@ function renderChips() {
     const b = document.createElement('button');
     b.className = 'chip';
     b.textContent = c;
-    b.onclick = () => send(c);
+    b.onclick = () => send(uiT(c));
     box.appendChild(b);
   });
 }
 
 /* ---------- 会话列表：最近对话（最新 3 条）+ 历史对话，右键重命名/删除 ---------- */
 async function renameSession(s, currentTitle) {
-  const t = prompt('重命名会话', currentTitle);
+  const t = uiPrompt('重命名会话', currentTitle);
   if (t && t.trim()) {
     try {
       await api('/db/session/' + encodeURIComponent(s.id), { method: 'PATCH', body: JSON.stringify({ title: t.trim() }) });
@@ -1265,7 +1276,7 @@ async function renameSession(s, currentTitle) {
   }
 }
 async function deleteSession(s) {
-  if (!confirm('删除该会话记录？')) return;
+  if (!uiConfirm('删除该会话记录？')) return;
   try {
     await api('/db/session/' + encodeURIComponent(s.id), { method: 'DELETE' });
     if (state.sessionId === s.id) {
@@ -2547,7 +2558,7 @@ $('#mSave').onclick = async () => {
 };
 $('#mDelete').onclick = async () => {
   if (_settingsEdit.id == null) { toast('请先在左侧选择一个配置'); return; }
-  if (!confirm('删除该模型配置？（已保存的 API Key 一并删除）')) return;
+  if (!uiConfirm('删除该模型配置？（已保存的 API Key 一并删除）')) return;
   try {
     await api('/model-profiles/' + _settingsEdit.id, { method: 'DELETE' });
     toast('已删除');
@@ -2801,7 +2812,7 @@ async function resolveAuditPending(button) {
   const evidenceRef = $('[data-pending-evidence]', item).value.trim();
   if (!Number.isInteger(sequence) || sequence <= 0) { toast('未决事件序号无效'); return; }
   if (!evidenceRef) { toast('请填写外部工单号或核验引用'); return; }
-  if (!confirm('这会追加管理员处置记录，不会修改原事件，也不能证明数据库原子终态。确认继续？')) return;
+  if (!uiConfirm('这会追加管理员处置记录，不会修改原事件，也不能证明数据库原子终态。确认继续？')) return;
   button.disabled = true;
   try {
     await api('/db/audit/reconciliation/resolve', {
@@ -3166,8 +3177,8 @@ async function issueCredential() {
   if (Object.values(databaseScope.columnScopes || {}).some(tables => Object.values(tables || {}).some(columns => !columns.length))) { toast('限定字段时请至少勾选一个字段'); return; }
   if ($('#credentialRowScopeMode').value === 'restricted' && !Object.keys(databaseScope.rowScopes || {}).length) { toast('限定行时请选择条件字段'); return; }
   if ($('#credentialRowScopeMode').value === 'restricted' && !['is_null', 'is_not_null'].includes($('#credentialRowOperator').value) && !$('#credentialRowValue').value.trim()) { toast('请填写行条件的比较值'); return; }
-  if (databaseScope.mode === 'all' && !confirm('该凭据将可访问当前及后续接入的全部数据库，确认继续？')) return;
-  if (role === 'admin' && !Object.keys(databaseScope.rowScopes || {}).length && !confirm('管理员凭据可执行高风险写入与安全管理，确认发行？')) return;
+  if (databaseScope.mode === 'all' && !uiConfirm('该凭据将可访问当前及后续接入的全部数据库，确认继续？')) return;
+  if (role === 'admin' && !Object.keys(databaseScope.rowScopes || {}).length && !uiConfirm('管理员凭据可执行高风险写入与安全管理，确认发行？')) return;
   const button = $('#credentialIssue');
   button.disabled = true;
   try {
@@ -3211,7 +3222,7 @@ $('#credentialCopy').onclick = copyCredentialToken;
 $('#credentialList').onclick = async event => {
   const button = event.target.closest('[data-credential-revoke]');
   if (!button || button.disabled || !roleCan('manage_credentials')) return;
-  if (!confirm('吊销后该 token 会立即失效且不能恢复，确认继续？')) return;
+  if (!uiConfirm('吊销后该 token 会立即失效且不能恢复，确认继续？')) return;
   button.disabled = true;
   try {
     await api(`/db/auth/credentials/${encodeURIComponent(button.dataset.credentialRevoke)}/revoke`, { method: 'POST' });
@@ -3801,7 +3812,7 @@ async function saveSemanticEntry() {
 }
 
 async function deleteSemanticEntry(id) {
-  if (!confirm('删除这条语义定义？')) return;
+  if (!uiConfirm('删除这条语义定义？')) return;
   try {
     await api('/db/semantics/' + encodeURIComponent(id) + '?dbId=' + encodeURIComponent(state.dbId), { method: 'DELETE' });
     if (_semanticEditId === id) resetSemanticForm();
@@ -4231,7 +4242,7 @@ $('#schedList').onclick = async (ev) => {
       if (!t) return;
       await api(`/db/schedules/${id}`, { method: 'PATCH', body: JSON.stringify({ enabled: t.enabled === false }) });
     } else if (act === 'del') {
-      if (!confirm('确认删除该定时任务？')) return;
+      if (!uiConfirm('确认删除该定时任务？')) return;
       await api(`/db/schedules/${id}`, { method: 'DELETE' });
     }
     loadSchedules(); loadSchedLogs();

@@ -1,11 +1,11 @@
 {
   "schema_version": 5,
-  "recorded_at": "2026-08-27T10:27:16+08:00",
-  "source_fingerprint": "e4a836d134eb3f07869d574273cdf71617f043541b98df953ffe73d9e50e36f6",
-  "controlled_file_count": 102,
+  "recorded_at": "2026-08-27T11:14:11+08:00",
+  "source_fingerprint": "82a135c0945f1b5692ee9386b7038936095e65140519fe5cdf9e1d3f0aa87c58",
+  "controlled_file_count": 103,
   "python": "3.12.13",
   "test_command": "scripts/check_project.cmd",
-  "tests_passed": 419,
+  "tests_passed": 420,
   "evaluation": {
     "suite_version": "2026.08.17-v23",
     "offline_passed": 134,
@@ -45,12 +45,12 @@
     }
   },
   "repository_hygiene": {
-    "candidate_files": 103,
-    "text_files_scanned": 96,
+    "candidate_files": 104,
+    "text_files_scanned": 97,
     "direct_dependencies": 7,
     "locked_dependencies": 26,
     "credential_findings": 0,
     "redistributed_assets_verified": 2
   },
-  "summary": "Open-source AI database agent discoverability metadata"
+  "summary": "Bilingual desktop interface and local i18n"
 }

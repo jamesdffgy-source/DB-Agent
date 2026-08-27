@@ -150,6 +150,30 @@ class RuntimeDependencyTests(unittest.TestCase):
             html,
         )
 
+    def test_desktop_language_switch_is_local_persistent_and_dynamic(self):
+        static_root = Path(__file__).parent / "desktop" / "static"
+        html = (static_root / "db.html").read_text(encoding="utf-8")
+        css = (static_root / "calm-theme.css").read_text(encoding="utf-8")
+        i18n = (static_root / "i18n.js").read_text(encoding="utf-8")
+
+        self.assertIn('class="locale-switch"', html)
+        self.assertIn('data-locale="zh-CN"', html)
+        self.assertIn('data-locale="en"', html)
+        self.assertIn('src="i18n.js?v=20260827-1"', html)
+        self.assertIn("window.DBQuillI18n.start()", html)
+        self.assertIn("dbquill_locale", i18n)
+        self.assertIn("MutationObserver", i18n)
+        self.assertIn("Open-Source AI Database Agent", i18n)
+        self.assertIn("'会话': 'Conversations'", i18n)
+        self.assertIn("window.confirm(uiT(message))", html)
+        self.assertNotIn("fetch(", i18n)
+        self.assertIn(".locale-switch button.active", css)
+        self.assertIn('html[lang="en"] .nav-tab', css)
+        project_gate = (static_root.parents[4] / "scripts" / "project_gate.py").read_text(
+            encoding="utf-8",
+        )
+        self.assertIn('static_root.glob("*.js")', project_gate)
+
     def test_desktop_uses_single_owner_mode_without_role_management_ui(self):
         html_path = Path(__file__).parent / "desktop" / "static" / "db.html"
         html = html_path.read_text(encoding="utf-8")
@@ -189,7 +213,7 @@ class RuntimeDependencyTests(unittest.TestCase):
         self.assertIn('id="writeFormModal"', html)
         self.assertIn('id="writeFormTable"', html)
         self.assertIn('id="writeFormGrid"', html)
-        self.assertIn('calm-theme.css?v=20260826-4', html)
+        self.assertIn('calm-theme.css?v=20260827-5', html)
         self.assertIn("原表示例", html)
         self.assertIn("生成变更预览", html)
         self.assertIn("/db/write/form?", html)

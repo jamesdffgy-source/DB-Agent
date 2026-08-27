@@ -3785,3 +3785,87 @@ aside.sessions {
     padding-left: 14px;
   }
 }
+
+/* Compact locale control beside the wordmark. It follows the paper-and-ink
+   header instead of looking like another primary navigation item. */
+.brand {
+  flex-basis: auto;
+  gap: 12px;
+  padding-right: 8px;
+}
+
+.locale-switch {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid rgba(23, 23, 21, .2);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .44);
+}
+
+.locale-switch button {
+  display: grid;
+  min-width: 30px;
+  height: 26px;
+  padding: 0 7px;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font: 650 10.5px/1 "Lexend", var(--font);
+  letter-spacing: .035em;
+  cursor: pointer;
+  transition: background-color .16s ease, color .16s ease, box-shadow .16s ease;
+}
+
+.locale-switch button:hover {
+  color: var(--text);
+}
+
+.locale-switch button.active {
+  background: #1d242e;
+  color: #fff;
+  box-shadow: 0 1px 4px rgba(23, 23, 21, .2);
+}
+
+.locale-switch button:focus-visible {
+  outline: 2px solid rgba(53, 91, 159, .42);
+  outline-offset: 1px;
+}
+
+html[lang="en"] .nav-tab {
+  padding-right: 14px;
+  padding-left: 14px;
+  letter-spacing: .015em;
+}
+
+@media (max-width: 1080px) {
+  .brand-wordmark {
+    font-size: 20px;
+  }
+
+  .locale-switch button {
+    min-width: 28px;
+    padding-right: 6px;
+    padding-left: 6px;
+  }
+}
+
+@media (max-width: 900px) {
+  .brand {
+    flex-basis: auto;
+    width: auto;
+    padding-right: 0;
+  }
+
+  .brand-wordmark {
+    display: none;
+  }
+
+  .brand > .locale-switch:last-child {
+    display: inline-flex;
+  }
+}

@@ -2,6 +2,15 @@
 
 All notable user-facing changes are recorded here. Versions follow semantic versioning while the project is in its initial public phase.
 
+## Unreleased
+
+### Added
+
+- Added a compact Chinese/English selector beside the DBQuill wordmark. The
+  interface locale follows the saved local preference, falls back to the system
+  language, and translates static and dynamically rendered application controls
+  without sending interface text to a translation service.
+
 ## 0.2.0 - 2026-08-27
 
 ### Added
