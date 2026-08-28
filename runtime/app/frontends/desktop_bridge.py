@@ -36,6 +36,11 @@ try:
 except Exception:
     _audit_store = None
 try:
+    import db_memory_store as _memory_store
+    _memory_store.init_db()
+except Exception:
+    _memory_store = None
+try:
     import db_identity_store as _identity_store
     _identity_store.init_db()
 except Exception:
@@ -2029,6 +2034,65 @@ def _audit_answer_details(question: str, answer: Optional[dict] = None) -> dict:
     return details
 
 
+def _db_memory_context(db_id: str, question: str, agent: Any) -> dict:
+    """Recall only memory from the current database/access/schema boundary."""
+    if _memory_store is None:
+        return {}
+    entry = _db_entry_unchecked(db_id)
+    if not entry:
+        return {}
+    try:
+        return _memory_store.recall(
+            database_ref=_database_scope_ref(entry),
+            access_scope_ref=_current_access_scope_ref(entry),
+            schema_ref=_memory_store.schema_fingerprint(agent.schema),
+            question=question,
+        )
+    except Exception:
+        return {}
+
+
+def _db_memory_record(
+    run_id: str,
+    db_id: str,
+    question: str,
+    sid: str,
+    agent: Any,
+    answer: Any,
+) -> dict:
+    """Persist a bounded episode after execution; memory failure never hides an answer."""
+    if _memory_store is None:
+        return {"stored": False, "reason": "store_unavailable"}
+    entry = _db_entry_unchecked(db_id)
+    if not entry:
+        return {"stored": False, "reason": "database_detached"}
+    try:
+        result = _memory_store.record_episode(
+            database_ref=_database_scope_ref(entry),
+            access_scope_ref=_current_access_scope_ref(entry),
+            schema_ref=_memory_store.schema_fingerprint(agent.schema),
+            session_id=sid,
+            run_id=run_id,
+            question=question,
+            answer=answer,
+        )
+    except Exception:
+        return {"stored": False, "reason": "writeback_failed"}
+    memory = getattr(answer, "memory", None)
+    if isinstance(memory, dict):
+        memory["writeback"] = {
+            "stored": bool(result.get("stored")),
+            "strategyStatus": result.get("strategyStatus"),
+            "correctedPrevious": bool(result.get("correctedEpisodeId")),
+        }
+        if result.get("stored"):
+            for layer in memory.get("layers") or []:
+                if isinstance(layer, dict) and layer.get("key") == "l4":
+                    layer["summary"] = str(layer.get("summary") or "") + "；本轮执行完成后已追加 1 条"
+                    break
+    return result
+
+
 def _audit_nl_terminal(
     run_id: str,
     db_id: str,
@@ -2097,7 +2161,11 @@ def _db_ask_workflow(run_id: str, db_id: str, question: str, sid: str = "", hist
                     run_id, "intent", "数据库已就绪，正在判断意图", 18,
                     {"phase": "action", "label": "加载数据库上下文"},
                 )
-                ans = agent.ask(question, history=history, clarification=clarification)
+                memory_context = _db_memory_context(db_id, question, agent)
+                ans = agent.ask(
+                    question, history=history, clarification=clarification,
+                    memory_context=memory_context,
+                )
             except ValueError as exc:
                 if "model profile" not in str(exc).lower():
                     raise
@@ -2113,7 +2181,11 @@ def _db_ask_workflow(run_id: str, db_id: str, question: str, sid: str = "", hist
                     run_id, "intent", "数据库已就绪，正在判断意图", 20,
                     {"phase": "action", "label": "加载数据库上下文"},
                 )
-                ans = agent.ask(question, history=history, clarification=clarification)
+                memory_context = _db_memory_context(db_id, question, agent)
+                ans = agent.ask(
+                    question, history=history, clarification=clarification,
+                    memory_context=memory_context,
+                )
         current_run = _DB_RUNS.get(run_id, {})
         if (cancel_event is not None and cancel_event.is_set()) \
                 or current_run.get("cancelRequested") \
@@ -2136,6 +2208,7 @@ def _db_ask_workflow(run_id: str, db_id: str, question: str, sid: str = "", hist
         completion_trace = completion_trace[-16:]
         with contextlib.suppress(Exception):
             ans.trace = completion_trace
+        _db_memory_record(run_id, db_id, question, sid, agent, ans)
         answer = _db_answer_to_dict(ans)
         confirm_id = str(getattr(ans, "confirm_id", "") or "")
         if confirm_id:
@@ -2669,6 +2742,15 @@ async def db_session_delete_handler(request):
     ok = False
     if _db_sess_store_ok():
         ok = _sess_store.delete_session(sid)
+    if _memory_store is not None:
+        entry = _db_entry_unchecked(str(session.get("dbId") or ""))
+        if entry is not None:
+            with contextlib.suppress(Exception):
+                _memory_store.delete_session(
+                    database_ref=_database_scope_ref(entry),
+                    access_scope_ref=str(session.get("accessScopeRef") or "all"),
+                    session_id=sid,
+                )
     _DB_SESSIONS.pop(sid, None)
     if not ok and not existed_in_memory:
         return json_ok({"ok": False, "error": f"session not found: {sid}"}, status=404)
@@ -3331,6 +3413,137 @@ async def db_tables_handler(request):
     except Exception as exc:
         return json_ok({"ok": False, "error": f"tables failed: {exc}"}, status=500)
     return json_ok({"ok": True, "tables": tables})
+
+
+def _db_memory_boundary(db_id: str) -> tuple[dict, Any, str, str, str]:
+    entry = _db_entry(db_id)
+    if not entry:
+        raise LookupError(f"database not attached: {db_id}")
+    if _memory_store is None:
+        raise RuntimeError("分层记忆存储不可用")
+    agent = _db_get_agent(db_id)
+    return (
+        entry,
+        agent,
+        _database_scope_ref(entry),
+        _current_access_scope_ref(entry),
+        _memory_store.schema_fingerprint(agent.schema),
+    )
+
+
+async def db_memory_handler(request):
+    """GET/DELETE /db/memory — inspect or clear the current scoped memory."""
+    db_id = str(request.query.get("dbId") or "").strip()
+    try:
+        _entry, _agent, database_ref, access_ref, schema_ref = _db_memory_boundary(db_id)
+    except LookupError as exc:
+        return json_ok({"ok": False, "error": str(exc)}, status=404)
+    except RuntimeError as exc:
+        return json_ok({"ok": False, "error": str(exc)}, status=500)
+    if request.method == "GET":
+        try:
+            memory = _memory_store.workspace(
+                database_ref=database_ref,
+                access_scope_ref=access_ref,
+                schema_ref=schema_ref,
+            )
+            return json_ok({"ok": True, "memory": memory})
+        except Exception as exc:
+            return json_ok({"ok": False, "error": f"读取分层记忆失败：{exc}"}, status=500)
+    if str(request.query.get("confirm") or "").strip().lower() != "clear":
+        return json_ok({"ok": False, "error": "清空记忆需要显式确认"}, status=400)
+    correlation_id = uuid.uuid4().hex[:20]
+    try:
+        _audit_append(
+            db_id,
+            category="memory_change",
+            action="clear",
+            outcome="approved",
+            summary="当前范围的分层记忆清空已批准",
+            risk="medium",
+            correlation_id=correlation_id,
+            details={"memory_layer": "l1-l4"},
+            strict=True,
+        )
+        deleted = _memory_store.clear_scope(
+            database_ref=database_ref,
+            access_scope_ref=access_ref,
+            schema_ref=schema_ref,
+        )
+        _audit_append(
+            db_id,
+            category="memory_change",
+            action="clear",
+            outcome="succeeded",
+            summary="当前范围的分层记忆已清空",
+            risk="medium",
+            correlation_id=correlation_id,
+            details={"entry_count": sum(int(value) for value in deleted.values())},
+        )
+        return json_ok({"ok": True, "deleted": deleted})
+    except AuditGateError as exc:
+        return json_ok({"ok": False, "error": str(exc)}, status=503)
+    except Exception as exc:
+        return json_ok({"ok": False, "error": f"清空分层记忆失败：{exc}"}, status=500)
+
+
+async def db_memory_strategy_handler(request):
+    """POST /db/memory/strategies/{id} — disable or restore one typed strategy."""
+    strategy_id = str(request.match_info.get("strategy_id") or "").strip()
+    data = await read_json(request)
+    db_id = str(data.get("dbId") or "").strip()
+    enabled = data.get("enabled")
+    if not isinstance(enabled, bool):
+        return json_ok({"ok": False, "error": "enabled 必须是布尔值"}, status=400)
+    correlation_id = uuid.uuid4().hex[:20]
+    audit_details = {
+        "memory_ref": _audit_ref(strategy_id),
+        "memory_layer": "l3",
+        "memory_status": "enabled" if enabled else "disabled",
+    }
+    try:
+        _entry, _agent, database_ref, access_ref, schema_ref = _db_memory_boundary(db_id)
+        _audit_append(
+            db_id,
+            category="memory_change",
+            action="enable_strategy" if enabled else "disable_strategy",
+            outcome="approved",
+            summary="分层记忆策略状态变更已批准",
+            risk="medium",
+            correlation_id=correlation_id,
+            details=audit_details,
+            strict=True,
+        )
+        strategy = _memory_store.set_strategy_enabled(
+            strategy_id,
+            database_ref=database_ref,
+            access_scope_ref=access_ref,
+            schema_ref=schema_ref,
+            enabled=enabled,
+        )
+        _audit_append(
+            db_id,
+            category="memory_change",
+            action="enable_strategy" if enabled else "disable_strategy",
+            outcome="succeeded",
+            summary="分层记忆策略状态已更新",
+            risk="medium",
+            correlation_id=correlation_id,
+            details={
+                "memory_ref": _audit_ref(strategy_id),
+                "memory_layer": "l3",
+                "memory_status": str(strategy.get("status") or ""),
+            },
+        )
+        return json_ok({"ok": True, "strategy": strategy})
+    except AuditGateError as exc:
+        return json_ok({"ok": False, "error": str(exc)}, status=503)
+    except LookupError as exc:
+        return json_ok({"ok": False, "error": str(exc)}, status=404)
+    except ValueError as exc:
+        return json_ok({"ok": False, "error": str(exc)}, status=404)
+    except Exception as exc:
+        return json_ok({"ok": False, "error": f"更新记忆策略失败：{exc}"}, status=500)
 
 
 async def db_semantics_handler(request):
@@ -4924,6 +5137,9 @@ def create_app():
     app.router.add_post("/db/charts-auto", db_charts_auto_handler)
     app.router.add_post("/db/charts-cache-status", db_charts_cache_status_handler)
     app.router.add_get("/db/tables", db_tables_handler)
+    app.router.add_get("/db/memory", db_memory_handler)
+    app.router.add_delete("/db/memory", db_memory_handler)
+    app.router.add_post("/db/memory/strategies/{strategy_id}", db_memory_strategy_handler)
     app.router.add_get("/db/semantics", db_semantics_handler)
     app.router.add_post("/db/semantics", db_semantics_handler)
     app.router.add_delete("/db/semantics/{semantic_id}", db_semantics_delete_handler)

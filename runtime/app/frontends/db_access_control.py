@@ -105,6 +105,7 @@ def capabilities(role: str) -> dict[str, bool]:
     return {
         "read": role_allows(role, "viewer"),
         "manage_workspace": role_allows(role, "operator"),
+        "manage_memory": role_allows(role, "operator"),
         "approve_bounded_write": role_allows(role, "operator"),
         "approve_high_risk_write": role_allows(role, "admin"),
         "detach_database": role_allows(role, "admin"),

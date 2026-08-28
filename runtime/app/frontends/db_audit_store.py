@@ -65,7 +65,7 @@ def _format_supported(value: Any, current: str) -> bool:
 _CATEGORIES = frozenset({
     "nl_operation", "write_confirmation", "write_execution",
     "semantic_change", "schedule_change", "schedule_execution",
-    "audit_backup", "audit_control", "access_control", "system",
+    "memory_change", "audit_backup", "audit_control", "access_control", "system",
 })
 _OUTCOMES = frozenset({
     "pending", "approved", "succeeded", "failed", "rejected", "cancelled",
@@ -93,6 +93,7 @@ _DETAIL_KEYS = frozenset({
     "column_scope_table_count", "column_scope_column_count",
     "row_scope_table_count", "row_scope_filter_count",
     "pending_sequence", "disposition", "evidence_sha256",
+    "memory_ref", "memory_layer", "memory_status",
 })
 _INTEGER_KEYS = frozenset({
     "question_length", "result_rows", "dataset_count", "affected_rows",
@@ -109,7 +110,7 @@ _HASH_KEYS = frozenset({
 })
 _REF_KEYS = frozenset({
     "confirm_ref", "semantic_ref", "schedule_ref", "backup_ref", "route_ref",
-    "credential_ref",
+    "credential_ref", "memory_ref",
 })
 _PENDING_DISPOSITIONS = frozenset({
     "verified_no_change", "verified_completed", "superseded",
@@ -588,6 +589,12 @@ def reconciliation_status(
             close_item(f"write:{correlation}")
         elif category == "semantic_change":
             key = f"semantic:{action}:{correlation}"
+            if outcome == "approved":
+                open_item(key, event)
+            elif outcome in terminal:
+                close_item(key)
+        elif category == "memory_change":
+            key = f"memory:{action}:{correlation}"
             if outcome == "approved":
                 open_item(key, event)
             elif outcome in terminal:

@@ -33,6 +33,7 @@ import db_audit_store
 import db_chart_cache
 import db_excel_transfer
 import db_identity_store
+import db_memory_store
 import db_sessions_store
 import db_semantic_store
 import dbquill_core as dc
@@ -162,7 +163,7 @@ class RuntimeDependencyTests(unittest.TestCase):
         self.assertIn('data-locale="en"', html)
         self.assertIn('<html lang="en">', html)
         self.assertIn('data-locale="en" class="active"', html)
-        self.assertIn('src="i18n.js?v=20260827-5"', html)
+        self.assertIn('src="i18n.js?v=20260828-1"', html)
         self.assertIn("window.DBQuillI18n.start()", html)
         self.assertIn("dbquill_locale", i18n)
         self.assertIn("return 'en';", i18n)
@@ -201,6 +202,9 @@ class RuntimeDependencyTests(unittest.TestCase):
         self.assertIn('class="run-trace"', html)
         self.assertIn('class="answer-trace"', html)
         self.assertIn('class="memory-card"', html)
+        self.assertIn('id="view-memory"', html)
+        self.assertIn('id="memoryStrategies"', html)
+        self.assertIn('/db/memory/strategies/', html)
         self.assertIn('id="excelImportBtn"', html)
         self.assertIn('id="excelExportBtn"', html)
         self.assertIn('/db/excel/import/prepare?', html)
@@ -209,6 +213,7 @@ class RuntimeDependencyTests(unittest.TestCase):
         self.assertIn("不含模型隐藏思维链", html)
         self.assertIn(".audit-item-expanded", css)
         self.assertIn(".memory-layer", css)
+        self.assertIn(".memory-ledger", css)
         self.assertIn(".excel-import-modal", css)
 
     def test_desktop_uses_single_owner_mode_without_role_management_ui(self):
@@ -250,7 +255,7 @@ class RuntimeDependencyTests(unittest.TestCase):
         self.assertIn('id="writeFormModal"', html)
         self.assertIn('id="writeFormTable"', html)
         self.assertIn('id="writeFormGrid"', html)
-        self.assertIn('calm-theme.css?v=20260827-6', html)
+        self.assertIn('calm-theme.css?v=20260828-1', html)
         self.assertIn("原表示例", html)
         self.assertIn("生成变更预览", html)
         self.assertIn("/db/write/form?", html)
@@ -812,6 +817,12 @@ class AccessControlContractTests(unittest.TestCase):
             "viewer",
         )
         self.assertEqual(db_access_control.required_role("POST", "/db/semantics"), "operator")
+        self.assertEqual(db_access_control.required_role("GET", "/db/memory"), "viewer")
+        self.assertEqual(
+            db_access_control.required_role("POST", "/db/memory/strategies/id"),
+            "operator",
+        )
+        self.assertEqual(db_access_control.required_role("DELETE", "/db/memory"), "operator")
         self.assertEqual(db_access_control.required_role("GET", "/db/excel/export"), "viewer")
         self.assertEqual(
             db_access_control.required_role("POST", "/db/excel/import/prepare"),
@@ -1242,17 +1253,27 @@ class PublicProgressAndMemoryTests(unittest.TestCase):
         self.assertEqual(events[0][2], 30)
         self.assertEqual(events[0][3]["intent"], "query")
 
-    def test_memory_snapshot_truthfully_marks_durable_personal_memory_disabled(self):
+    def test_memory_snapshot_reports_real_l0_to_l4_inputs(self):
         agent = self.agent = dc.DBQuillAgent(db_path=str(self._database_for_memory()))
         answer = agent._attach_memory_snapshot(
             dc.DBAnswer(kind="conversation", narrative="ok"),
             question="继续", resolved_question="上一个完整问题；追问：继续",
             history=[{"role": "user", "content": "上一个完整问题"}],
+            memory_context={
+                "l1": {"matchedReferences": 3},
+                "l2": [{"id": "fact"}],
+                "l3": [{"id": "strategy", "status": "promoted"}],
+                "l4": [{"id": "episode"}],
+            },
         )
         layers = {item["key"]: item for item in answer.memory["layers"]}
         self.assertTrue(layers["working"]["active"])
-        self.assertTrue(layers["topic"]["active"])
-        self.assertFalse(layers["durable"]["active"])
+        self.assertTrue(layers["l0"]["active"])
+        self.assertTrue(layers["l1"]["active"])
+        self.assertTrue(layers["l2"]["active"])
+        self.assertTrue(layers["l3"]["active"])
+        self.assertTrue(layers["l4"]["active"])
+        self.assertEqual(answer.memory["version"], "2.0")
 
     def _database_for_memory(self) -> Path:
         temporary = tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False)
@@ -1263,6 +1284,188 @@ class PublicProgressAndMemoryTests(unittest.TestCase):
             connection.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT)")
             connection.commit()
         return path
+
+
+class LayeredMemoryStoreTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path_patch = mock.patch.object(
+            db_memory_store, "_DB_PATH", Path(self.tmp.name) / "memory.db",
+        )
+        self.data_patch = mock.patch.object(
+            db_memory_store, "_DATA_DIR", Path(self.tmp.name),
+        )
+        self.path_patch.start()
+        self.data_patch.start()
+        db_memory_store.init_db()
+        self.boundary = {
+            "database_ref": "a" * 64,
+            "access_scope_ref": "all",
+            "schema_ref": "b" * 64,
+        }
+
+    def tearDown(self):
+        self.data_patch.stop()
+        self.path_patch.stop()
+        self.tmp.cleanup()
+
+    @staticmethod
+    def _answer():
+        return {
+            "kind": "query",
+            "narrative": "done",
+            "rows": [["private-result"]],
+            "evidence": [],
+            "steps": [
+                {"tool": "bounded_read_explorer", "action": "search_values"},
+                {"tool": "bounded_read_explorer", "action": "run_sql"},
+            ],
+            "operation": {
+                "mode": "read", "intent": "query", "action": "query",
+                "status": "executed", "target_tables": ["people", "work"],
+            },
+        }
+
+    def _record(self, run_id: str, question: str = "查找肖仰华的工作"):
+        return db_memory_store.record_episode(
+            **self.boundary,
+            session_id="session-one",
+            run_id=run_id,
+            question=question,
+            answer=self._answer(),
+        )
+
+    def test_repeated_execution_promotes_typed_strategy_and_recall_is_scoped(self):
+        for index, question in enumerate((
+            "查找肖仰华的工作", "肖仰华有哪些工作", "给我肖仰华的工作记录",
+        )):
+            self.assertTrue(self._record(f"run-{index}", question)["stored"])
+        current = db_memory_store.workspace(**self.boundary)
+        self.assertEqual(current["counts"]["l4"], 3)
+        self.assertEqual(current["strategies"][0]["status"], "promoted")
+        recalled = db_memory_store.recall(
+            **self.boundary, question="肖仰华有哪些工作",
+        )
+        self.assertTrue(recalled["l2"])
+        self.assertEqual(recalled["l3"][0]["status"], "promoted")
+        self.assertTrue(recalled["plannerAdvisory"])
+        isolated = db_memory_store.recall(
+            database_ref=self.boundary["database_ref"],
+            access_scope_ref="restricted-scope",
+            schema_ref=self.boundary["schema_ref"],
+            question="肖仰华有哪些工作",
+        )
+        self.assertFalse(isolated["l2"])
+        self.assertFalse(isolated["l3"])
+        self.assertFalse(isolated["l4"])
+
+    def test_correction_demotes_strategy_and_strategy_can_be_disabled(self):
+        for index in range(3):
+            self._record(f"run-{index}")
+        self._record("run-correction", "不对，我说的是肖仰华承担的项目")
+        current = db_memory_store.workspace(**self.boundary)
+        original = next(
+            item for item in current["strategies"]
+            if item["correctionCount"] == 1
+        )
+        self.assertEqual(original["status"], "candidate")
+        self._record("run-recovery-1", "再查一次肖仰华承担的项目")
+        self._record("run-recovery-2", "核对肖仰华承担的项目")
+        recovered = next(
+            item for item in db_memory_store.workspace(**self.boundary)["strategies"]
+            if item["id"] == original["id"]
+        )
+        self.assertEqual(recovered["status"], "promoted")
+        self.assertEqual(recovered["promotionThreshold"], 6)
+        disabled = db_memory_store.set_strategy_enabled(
+            original["id"], **self.boundary, enabled=False,
+        )
+        self.assertEqual(disabled["status"], "disabled")
+        recalled = db_memory_store.recall(
+            **self.boundary, question="查找肖仰华的工作",
+        )
+        self.assertNotIn(original["id"], [item["id"] for item in recalled["l3"]])
+
+    def test_candidate_never_becomes_planner_advisory_and_writes_are_excluded(self):
+        self._record("candidate-run", "查找候选路线")
+        recalled = db_memory_store.recall(
+            **self.boundary, question="查找候选路线",
+        )
+        self.assertEqual(recalled["l3"][0]["status"], "candidate")
+        self.assertEqual(recalled["plannerAdvisory"], [])
+        write_answer = self._answer()
+        write_answer["operation"] = {
+            "mode": "write", "intent": "insert", "action": "insert",
+            "status": "executed", "target_tables": ["people"],
+        }
+        excluded = db_memory_store.record_episode(
+            **self.boundary,
+            session_id="session-one",
+            run_id="write-run",
+            question="写入一行",
+            answer=write_answer,
+        )
+        self.assertFalse(excluded["stored"])
+        self.assertEqual(excluded["reason"], "not_a_completed_read")
+
+    def test_correction_does_not_cross_schema_fingerprint(self):
+        for index in range(3):
+            self._record(f"old-schema-{index}")
+        other_boundary = {**self.boundary, "schema_ref": "c" * 64}
+        result = db_memory_store.record_episode(
+            **other_boundary,
+            session_id="session-one",
+            run_id="new-schema-correction",
+            question="不对，请按新结构查找肖仰华的工作",
+            answer=self._answer(),
+        )
+        self.assertIsNone(result["correctedEpisodeId"])
+        old_strategy = db_memory_store.workspace(**self.boundary)["strategies"][0]
+        new_strategy = db_memory_store.workspace(**other_boundary)["strategies"][0]
+        self.assertEqual(old_strategy["status"], "promoted")
+        self.assertEqual(old_strategy["correctionCount"], 0)
+        self.assertEqual(new_strategy["status"], "candidate")
+        self.assertEqual(new_strategy["correctionCount"], 0)
+
+    def test_session_delete_rebuilds_shared_route_index_without_deleted_tokens(self):
+        self._record("session-one-run", "alphaonly people work")
+        db_memory_store.record_episode(
+            **self.boundary,
+            session_id="session-two",
+            run_id="session-two-run",
+            question="betaonly people work",
+            answer=self._answer(),
+        )
+        deleted = db_memory_store.delete_session(
+            database_ref=self.boundary["database_ref"],
+            access_scope_ref=self.boundary["access_scope_ref"],
+            session_id="session-one",
+        )
+        self.assertEqual(deleted, 1)
+        current = db_memory_store.workspace(**self.boundary)
+        self.assertEqual(current["facts"][0]["supportCount"], 1)
+        self.assertFalse(db_memory_store.recall(
+            **self.boundary, question="alphaonly",
+        )["l2"])
+        self.assertTrue(db_memory_store.recall(
+            **self.boundary, question="betaonly",
+        )["l2"])
+
+    def test_store_redacts_secrets_and_session_delete_removes_derived_memory(self):
+        self._record("run-secret", "查 people，password=do-not-store")
+        persisted = Path(db_memory_store._DB_PATH).read_bytes()
+        self.assertNotIn(b"do-not-store", persisted)
+        self.assertNotIn(b"private-result", persisted)
+        deleted = db_memory_store.delete_session(
+            database_ref=self.boundary["database_ref"],
+            access_scope_ref=self.boundary["access_scope_ref"],
+            session_id="session-one",
+        )
+        self.assertEqual(deleted, 1)
+        current = db_memory_store.workspace(**self.boundary)
+        self.assertEqual(current["counts"]["l4"], 0)
+        self.assertEqual(current["counts"]["l2"], 0)
+        self.assertEqual(current["counts"]["l3"], 0)
 
 
 class LocalApiAuthTests(AioHTTPTestCase):
@@ -2299,6 +2502,126 @@ class SessionHandlerTests(AioHTTPTestCase):
         self.assertEqual(response.status, 200)
         self.assertTrue((await response.json())["ok"])
         self.assertNotIn("memory-session", desktop_bridge._DB_SESSIONS)
+
+
+class LayeredMemoryApiTests(AioHTTPTestCase):
+    async def get_application(self):
+        app = web.Application(middlewares=[desktop_bridge.cors_middleware])
+        app.router.add_get("/db/memory", desktop_bridge.db_memory_handler)
+        app.router.add_delete("/db/memory", desktop_bridge.db_memory_handler)
+        app.router.add_post(
+            "/db/memory/strategies/{strategy_id}",
+            desktop_bridge.db_memory_strategy_handler,
+        )
+        return app
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.memory_data_patch = mock.patch.object(db_memory_store, "_DATA_DIR", root)
+        self.memory_path_patch = mock.patch.object(
+            db_memory_store, "_DB_PATH", root / "memory.db",
+        )
+        self.audit_data_patch = mock.patch.object(db_audit_store, "_DATA_DIR", root)
+        self.audit_path_patch = mock.patch.object(
+            db_audit_store, "_DB_PATH", root / "audit.db",
+        )
+        for patcher in (
+            self.memory_data_patch, self.memory_path_patch,
+            self.audit_data_patch, self.audit_path_patch,
+        ):
+            patcher.start()
+        db_memory_store.init_db()
+        db_audit_store.init_db()
+        self.original_memory_store = desktop_bridge._memory_store
+        self.original_audit_store = desktop_bridge._audit_store
+        desktop_bridge._memory_store = db_memory_store
+        desktop_bridge._audit_store = db_audit_store
+        self.db_id = "layered-memory-api"
+        self.database_path = root / "source.sqlite"
+        _make_db(self.database_path, rows=2)
+        desktop_bridge._DB_AGENT_DBS[self.db_id] = {
+            "id": self.db_id,
+            "name": "source.sqlite",
+            "path": str(self.database_path),
+            "tables": ["items"],
+            "kind": "sqlite",
+            "attachedAt": 0,
+        }
+        agent = desktop_bridge._db_get_agent(self.db_id)
+        boundary = {
+            "database_ref": desktop_bridge._database_scope_ref(
+                desktop_bridge._DB_AGENT_DBS[self.db_id],
+            ),
+            "access_scope_ref": "all",
+            "schema_ref": db_memory_store.schema_fingerprint(agent.schema),
+        }
+        answer = {
+            "kind": "query", "rows": [[2]], "steps": [{"action": "select"}],
+            "operation": {
+                "mode": "read", "intent": "query", "action": "select",
+                "status": "executed", "target_tables": ["items"],
+            },
+        }
+        for index in range(3):
+            db_memory_store.record_episode(
+                **boundary,
+                session_id="memory-api-session",
+                run_id=f"memory-api-{index}",
+                question=f"items 记录数 {index}",
+                answer=answer,
+            )
+
+    async def asyncTearDown(self):
+        desktop_bridge._DB_AGENT_CACHE.pop(self.db_id, None)
+        desktop_bridge._DB_AGENT_DBS.pop(self.db_id, None)
+        desktop_bridge._memory_store = self.original_memory_store
+        desktop_bridge._audit_store = self.original_audit_store
+        for patcher in (
+            self.audit_path_patch, self.audit_data_patch,
+            self.memory_path_patch, self.memory_data_patch,
+        ):
+            patcher.stop()
+        self.tmp.cleanup()
+        await super().asyncTearDown()
+
+    async def test_memory_api_is_scoped_role_guarded_audited_and_clearable(self):
+        viewer_headers = {"X-DBQuill-Token": desktop_bridge._ROLE_TOKENS["viewer"]}
+        operator_headers = {"X-DBQuill-Token": desktop_bridge._ROLE_TOKENS["operator"]}
+        read = await self.client.get(
+            f"/db/memory?dbId={self.db_id}", headers=viewer_headers,
+        )
+        self.assertEqual(read.status, 200)
+        payload = await read.json()
+        self.assertEqual(payload["memory"]["strategies"][0]["status"], "promoted")
+        strategy_id = payload["memory"]["strategies"][0]["id"]
+        denied = await self.client.post(
+            f"/db/memory/strategies/{strategy_id}",
+            headers=viewer_headers,
+            json={"dbId": self.db_id, "enabled": False},
+        )
+        self.assertEqual(denied.status, 403)
+        disabled = await self.client.post(
+            f"/db/memory/strategies/{strategy_id}",
+            headers=operator_headers,
+            json={"dbId": self.db_id, "enabled": False},
+        )
+        self.assertEqual(disabled.status, 200)
+        self.assertEqual((await disabled.json())["strategy"]["status"], "disabled")
+        cleared = await self.client.delete(
+            f"/db/memory?dbId={self.db_id}&confirm=clear",
+            headers=operator_headers,
+        )
+        self.assertEqual(cleared.status, 200)
+        after = await self.client.get(
+            f"/db/memory?dbId={self.db_id}", headers=viewer_headers,
+        )
+        self.assertEqual((await after.json())["memory"]["counts"]["l4"], 0)
+        events = db_audit_store.list_events(category="memory_change")
+        self.assertEqual(len(events), 4)
+        self.assertTrue(db_audit_store.verify_chain()["ok"])
+        self.assertEqual(db_audit_store.reconciliation_status()["unresolved_count"], 0)
 
 
 class DatabaseSafetyTests(unittest.TestCase):

@@ -1,11 +1,11 @@
 {
   "schema_version": 5,
-  "recorded_at": "2026-08-27T23:42:08+08:00",
-  "source_fingerprint": "a67b8bfcf3c26400c3be452a95e43f6630bac640da85d84e6348e169b7c5601b",
-  "controlled_file_count": 104,
+  "recorded_at": "2026-08-28T15:30:27+08:00",
+  "source_fingerprint": "d6dae84db4c5a53ee8eca50fdb79b9ea3aa09b3bd7f7957e30738142898c33de",
+  "controlled_file_count": 105,
   "python": "3.12.13",
   "test_command": "scripts/check_project.cmd",
-  "tests_passed": 467,
+  "tests_passed": 474,
   "evaluation": {
     "suite_version": "2026.08.17-v23",
     "offline_passed": 134,
@@ -45,12 +45,12 @@
     }
   },
   "repository_hygiene": {
-    "candidate_files": 105,
-    "text_files_scanned": 98,
+    "candidate_files": 106,
+    "text_files_scanned": 99,
     "direct_dependencies": 7,
     "locked_dependencies": 26,
     "credential_findings": 0,
     "redistributed_assets_verified": 2
   },
-  "summary": "Add observable runs, explicit memory status, expandable audit details, and transactional Excel exchange"
+  "summary": "实现并加固 L0-L4 执行记忆：作用域隔离、成功证据晋级、纠错降级、删除派生重建、管理审计和双语工作台；474 项回归与真实 HTTP 闭环通过"
 }

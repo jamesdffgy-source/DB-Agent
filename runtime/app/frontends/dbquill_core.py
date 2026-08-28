@@ -19441,6 +19441,7 @@ class AutonomousReadExplorer:
         anchor_entities: Optional[List[str]] = None,
         require_data_observation: bool = False,
         initial_action: Optional[dict] = None,
+        memory_advisory: Optional[List[dict]] = None,
     ) -> Optional[DBAnswer]:
         """Bind the whole optional loop to one real cancellation deadline."""
         deadline_event = threading.Event()
@@ -19460,6 +19461,7 @@ class AutonomousReadExplorer:
                 anchor_entities=anchor_entities,
                 require_data_observation=require_data_observation,
                 initial_action=initial_action,
+                memory_advisory=memory_advisory,
             )
         finally:
             timer.cancel()
@@ -19474,6 +19476,7 @@ class AutonomousReadExplorer:
         anchor_entities: Optional[List[str]] = None,
         require_data_observation: bool = False,
         initial_action: Optional[dict] = None,
+        memory_advisory: Optional[List[dict]] = None,
     ) -> Optional[DBAnswer]:
         """Run the bounded loop and return only a grounded, non-regressive result."""
         started = time.monotonic()
@@ -19492,6 +19495,25 @@ class AutonomousReadExplorer:
             "required_new_data_observation": bool(require_data_observation),
             **self._answer_observation(initial),
         }]
+        if memory_advisory:
+            # These are execution-verified, typed route hints. They remain
+            # untrusted observations: the planner must validate them against
+            # the current authorized schema and fresh tool output.
+            observations.insert(0, {
+                "source": "layered_memory",
+                "advisory_only": True,
+                "strategies": [
+                    {
+                        "status": str(item.get("status") or "candidate"),
+                        "intent": str(item.get("intent") or ""),
+                        "target_tables": list(item.get("target_tables") or [])[:8],
+                        "read_actions": list(item.get("read_actions") or [])[:10],
+                        "support_count": int(item.get("support_count") or 0),
+                        "correction_count": int(item.get("correction_count") or 0),
+                    }
+                    for item in memory_advisory[:2] if isinstance(item, dict)
+                ],
+            })
         best = initial
         best_score = self._score(initial)
         seen: set[str] = set()
@@ -20094,56 +20116,66 @@ class DBQuillAgent:
         resolved_question: str = "",
         history: Optional[list] = None,
         semantic: Optional[SemanticResolution] = None,
+        memory_context: Optional[dict] = None,
     ) -> DBAnswer:
-        """Expose only the memory layers actually used for this answer."""
+        """Expose the actual layered-memory inputs recalled for this answer."""
         history_count = min(len(history or []), _HISTORY_MAX_MSGS)
-        inherited_topic = bool(
-            resolved_question
-            and resolved_question.strip() != str(question or "").strip()
+        memory_context = memory_context if isinstance(memory_context, dict) else {}
+        l1 = memory_context.get("l1") if isinstance(memory_context.get("l1"), dict) else {}
+        l2 = memory_context.get("l2") if isinstance(memory_context.get("l2"), list) else []
+        l3 = memory_context.get("l3") if isinstance(memory_context.get("l3"), list) else []
+        l4 = memory_context.get("l4") if isinstance(memory_context.get("l4"), list) else []
+        matched_refs = int(l1.get("matchedReferences") or 0)
+        promoted = sum(
+            1 for item in l3
+            if isinstance(item, dict) and item.get("status") == "promoted"
         )
-        semantic_matches = len(semantic.matches) if semantic is not None else 0
         answer.memory = {
-            "version": "1.0",
+            "version": "2.0",
+            "policy": memory_context.get("policy") if isinstance(
+                memory_context.get("policy"), dict,
+            ) else {
+                "version": "dbquill-memory-policy-v1",
+                "immutable": True,
+            },
             "layers": [
                 {
                     "key": "working",
-                    "label": "会话工作记忆",
+                    "label": "工作检查点",
                     "active": history_count > 0,
-                    "scope": "当前会话",
+                    "scope": "当前会话 · 非长期层",
                     "summary": (
-                        f"本轮参考最近 {history_count} 条消息（上限 {_HISTORY_MAX_MSGS} 条）"
-                        if history_count else "本轮没有可用的历史消息"
+                        f"本轮参考最近 {history_count} 条消息"
+                        if history_count else "本轮没有会话历史"
                     ),
                 },
                 {
-                    "key": "topic",
-                    "label": "话题锚点",
-                    "active": inherited_topic,
-                    "scope": "当前会话",
-                    "summary": (
-                        "已把短追问绑定到最近的完整问题"
-                        if inherited_topic else "本轮未继承上一问题"
-                    ),
+                    "key": "l0", "label": "L0 · 记忆宪章", "active": True,
+                    "scope": "代码固定 · 不可由模型改写",
+                    "summary": "执行证据、权限隔离、脱敏和只读策略边界已生效",
                 },
                 {
-                    "key": "semantic",
-                    "label": "数据库语义记忆",
-                    "active": semantic_matches > 0,
-                    "scope": "当前数据库（持久化）",
-                    "summary": (
-                        f"命中 {semantic_matches} 项业务定义；目录共 {len(self.semantic_catalog.entries)} 项"
-                        if semantic_matches else
-                        f"本轮未命中业务定义；目录共 {len(self.semantic_catalog.entries)} 项"
-                    ),
+                    "key": "l1", "label": "L1 · 索引", "active": matched_refs > 0,
+                    "scope": "当前数据库 / 授权范围 / 结构版本",
+                    "summary": f"召回 {matched_refs} 个分层引用",
                 },
                 {
-                    "key": "durable",
-                    "label": "跨会话个人记忆",
-                    "active": False,
-                    "scope": "未启用",
-                    "summary": "不会自动提取或跨会话保存个人偏好与事实",
+                    "key": "l2", "label": "L2 · 已验证路径事实", "active": bool(l2),
+                    "scope": "执行验证 · 不含数据库值",
+                    "summary": f"命中 {len(l2)} 条路径事实",
+                },
+                {
+                    "key": "l3", "label": "L3 · 只读策略", "active": bool(l3),
+                    "scope": "候选 / 晋级 / 可停用",
+                    "summary": f"命中 {len(l3)} 条策略，其中 {promoted} 条已晋级",
+                },
+                {
+                    "key": "l4", "label": "L4 · 执行片段", "active": bool(l4),
+                    "scope": "脱敏、限量、可删除",
+                    "summary": f"召回 {len(l4)} 条相关执行记录",
                 },
             ],
+            "used": {"l2": l2[:3], "l3": l3[:3], "l4": l4[:3]},
         }
         return answer
 
@@ -20269,6 +20301,7 @@ class DBQuillAgent:
         question: str,
         history: Optional[list] = None,
         clarification: Optional[dict] = None,
+        memory_context: Optional[dict] = None,
     ) -> DBAnswer:
         """总入口：意图路由 → 分发执行。history 为会话内多轮上下文（可选）。"""
         raw_sql_rejection = OriginalSQLRequestGuard.reject_reason(question)
@@ -20295,6 +20328,7 @@ class DBQuillAgent:
             )
             return self._attach_memory_snapshot(
                 answer, question=question, history=history,
+                memory_context=memory_context,
             )
         conversation_answer = self.conversation.answer(
             question,
@@ -20307,6 +20341,7 @@ class DBQuillAgent:
             )
             return self._attach_memory_snapshot(
                 conversation_answer, question=question, history=history,
+                memory_context=memory_context,
             )
         resolved_question = self.operation_planner.resolve_followup(question, history, clarification)
         semantic = self.semantic_catalog.resolve(resolved_question)
@@ -20330,13 +20365,17 @@ class DBQuillAgent:
             )
             return self._attach_memory_snapshot(
                 ans, question=question, resolved_question=resolved_question,
-                history=history, semantic=semantic,
+                history=history, semantic=semantic, memory_context=memory_context,
             )
 
         schema_context = self.schema.compact()
         semantic_context = self.semantic_catalog.prompt_context()
         if semantic_context:
             schema_context += "\n\n业务语义目录：\n" + semantic_context
+        memory_advisory = (
+            memory_context.get("plannerAdvisory")
+            if isinstance(memory_context, dict) else None
+        )
         ir = self.router.classify(execution_question, schema_context, history=history)
         if ir.intent in {"query", "compose"} \
                 and self.rag.prefers_entity_evidence(resolved_question):
@@ -20407,7 +20446,7 @@ class DBQuillAgent:
             )
             return self._attach_memory_snapshot(
                 answer, question=question, resolved_question=resolved_question,
-                history=history, semantic=semantic,
+                history=history, semantic=semantic, memory_context=memory_context,
             )
         clarification = self.operation_planner.clarification_for(resolved_question, operation)
         if self.structured_insert.should_offer(operation, clarification, ir):
@@ -20427,7 +20466,7 @@ class DBQuillAgent:
             ]
             return self._attach_memory_snapshot(
                 answer, question=question, resolved_question=resolved_question,
-                history=history, semantic=semantic,
+                history=history, semantic=semantic, memory_context=memory_context,
             )
         if not operation.target_tables:
             if clarification is not None and clarification.get("missing") == "target_table":
@@ -20500,7 +20539,7 @@ class DBQuillAgent:
             answer.semantic = semantic.as_dict() if semantic.matches else None
             return self._attach_memory_snapshot(
                 answer, question=question, resolved_question=resolved_question,
-                history=history, semantic=semantic,
+                history=history, semantic=semantic, memory_context=memory_context,
             )
         metric_answer = (
             self.multi_metric_query.answer(resolved_question, semantic)
@@ -20631,6 +20670,7 @@ class DBQuillAgent:
                 anchor_entities=ir.entities,
                 require_data_observation=require_data_observation,
                 initial_action=ir.initial_exploration,
+                memory_advisory=(memory_advisory if isinstance(memory_advisory, list) else None),
             )
             if explored is not None:
                 ans = explored
@@ -20706,7 +20746,7 @@ class DBQuillAgent:
         )
         return self._attach_memory_snapshot(
             ans, question=question, resolved_question=resolved_question,
-            history=history, semantic=semantic,
+            history=history, semantic=semantic, memory_context=memory_context,
         )
 
     def confirm_write(self, confirm_id: str, approve: bool = True) -> DBAnswer:

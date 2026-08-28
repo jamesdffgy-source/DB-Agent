@@ -478,7 +478,7 @@
   .log-item b { color: var(--text); font-weight: 600; }
   .empty-tip { color: var(--text-3); font-size: 12.5px; text-align: center; padding: 26px 0; }
 </style>
-<link rel="stylesheet" href="calm-theme.css?v=20260827-6">
+<link rel="stylesheet" href="calm-theme.css?v=20260828-1">
 </head>
 <body>
 <div class="bg-glow"></div>
@@ -497,6 +497,7 @@
       <button class="nav-tab active" data-view="sessions">会话</button>
       <button class="nav-tab" data-view="charts">图表</button>
       <button class="nav-tab" data-view="schedules">定时操作</button>
+      <button class="nav-tab" data-view="memory">记忆</button>
       <button class="nav-tab" data-view="semantics">语义层</button>
       <button class="nav-tab" data-view="audit">审计记录</button>
     </nav>
@@ -841,6 +842,32 @@
       </div>
     </section>
 
+    <section class="view" id="view-memory">
+      <div class="card memory-workspace">
+        <div class="panel-head memory-workspace-head">
+          <div>
+            <span>分层记忆</span>
+            <small id="memoryBoundary">等待选择数据库</small>
+          </div>
+          <div class="memory-workspace-actions">
+            <button class="btn" id="memoryClear"><span class="ico">×</span>清空当前范围</button>
+            <button class="btn primary" id="memoryRefresh"><span class="ico">↻</span>刷新</button>
+          </div>
+        </div>
+        <div class="memory-principle">
+          <span>EXECUTION → EPISODE → VERIFIED ROUTE → PROMOTED STRATEGY</span>
+          <p>工作检查点不属于长期层。只有真实完成的只读执行能强化记忆；纠错会降权，所有内容严格绑定当前数据库、授权范围和结构版本。</p>
+        </div>
+        <div class="memory-ledger" id="memoryLedger">
+          <article class="memory-ledger-layer l0"><header><b>L0</b><div><strong>记忆宪章</strong><small>代码固定 · 不可写</small></div></header><div class="memory-layer-body" id="memoryPolicy"><div class="empty-tip">正在加载边界规则</div></div></article>
+          <article class="memory-ledger-layer l1"><header><b>L1</b><div><strong>紧凑索引</strong><small id="memoryL1Count">0 个引用</small></div></header><div class="memory-layer-body"><p>只加载与当前问题相关的分层引用，不把完整历史塞进模型上下文。</p></div></article>
+          <article class="memory-ledger-layer l2"><header><b>L2</b><div><strong>已验证路径事实</strong><small id="memoryL2Count">0 条</small></div></header><div class="memory-layer-body memory-object-list" id="memoryFacts"><div class="empty-tip">暂无执行验证的路径事实</div></div></article>
+          <article class="memory-ledger-layer l3"><header><b>L3</b><div><strong>只读策略</strong><small id="memoryL3Count">0 条</small></div></header><div class="memory-layer-body memory-object-list" id="memoryStrategies"><div class="empty-tip">首次或每次纠错后取得 3 次成功证据才会晋级</div></div></article>
+          <article class="memory-ledger-layer l4"><header><b>L4</b><div><strong>执行片段</strong><small id="memoryL4Count">0 条</small></div></header><div class="memory-layer-body memory-object-list" id="memoryEpisodes"><div class="empty-tip">暂无脱敏执行记录</div></div></article>
+        </div>
+      </div>
+    </section>
+
     <section class="view" id="view-audit">
       <div class="card audit-panel">
         <div class="panel-head audit-head">
@@ -856,6 +883,7 @@
                 <option value="write_confirmation">写确认</option>
                 <option value="write_execution">写执行</option>
                 <option value="semantic_change">语义变更</option>
+                <option value="memory_change">记忆变更</option>
                 <option value="schedule_change">调度变更</option>
                 <option value="schedule_execution">调度执行</option>
                 <option value="audit_backup">账本备份</option>
@@ -1127,7 +1155,7 @@
 </div>
 
 <script src="vendor/echarts.min.js"></script>
-<script src="i18n.js?v=20260827-5"></script>
+<script src="i18n.js?v=20260828-1"></script>
 <script>
 'use strict';
 /* ================= DBQuill 前端逻辑 ================= */
@@ -1167,6 +1195,7 @@ const state = {
     databaseScope: { mode: 'all', databaseCount: 0, tableScopeTableCount: 0, columnScopeColumnCount: 0, rowScopeFilterCount: 0 },
     capabilities: {
       read: true, manage_workspace: false, approve_bounded_write: false,
+      manage_memory: false,
       approve_high_risk_write: false, detach_database: false, create_audit_backup: false,
       resolve_audit_pending: false, manage_credentials: false,
     },
@@ -1233,6 +1262,7 @@ function applyAccessContext(access) {
   setRoleDisabled('semanticImport', 'manage_workspace', '当前会话没有修改工作区的权限');
   setRoleDisabled('semSave', 'manage_workspace', '当前会话没有修改工作区的权限');
   setRoleDisabled('semanticImportApply', 'manage_workspace', '当前会话没有修改工作区的权限');
+  setRoleDisabled('memoryClear', 'manage_memory', '当前会话不能清空分层记忆');
   setRoleDisabled('excelImportBtn', 'approve_bounded_write', '当前会话不能执行 Excel 批量写入');
   setRoleDisabled('createTableBtn', 'approve_high_risk_write', '只有管理员可以创建数据库结构');
   setRoleDisabled('writeFormCreateTable', 'approve_high_risk_write', '只有管理员可以创建数据库结构');
@@ -1962,11 +1992,22 @@ function addAnswerCard(res, sourceDbId = state.dbId, historyMode = false) {
   if (res.memory && Array.isArray(res.memory.layers)) {
     const layers = res.memory.layers.slice(0, 6);
     const activeCount = layers.filter(layer => layer && layer.active).length;
-    inner += '<details class="memory-card"><summary><span>记忆使用</span><small>' + activeCount + ' / ' + layers.length + ' 层在本轮生效</small></summary><div class="memory-layer-list">';
+    inner += '<details class="memory-card"><summary><span>记忆召回</span><small>' + activeCount + ' / ' + layers.length + ' 层有本轮输入</small></summary><div class="memory-layer-list">';
     layers.forEach(layer => {
       inner += '<div class="memory-layer ' + (layer.active ? 'active' : 'inactive') + '"><i></i><div><strong>' + esc(layer.label || layer.key || '记忆层') + '</strong><span>' + esc(layer.summary || '') + '</span></div><small>' + esc(layer.scope || '') + '</small></div>';
     });
-    inner += '</div></details>';
+    inner += '</div>';
+    const used = res.memory.used && typeof res.memory.used === 'object' ? res.memory.used : {};
+    const usedItems = [];
+    (Array.isArray(used.l2) ? used.l2 : []).forEach(item => usedItems.push({ layer: 'L2', title: (item.targetTables || []).join(' · ') || '路径事实', detail: memoryActions(item.actions), state: item.supportCount + ' 次支持' }));
+    (Array.isArray(used.l3) ? used.l3 : []).forEach(item => usedItems.push({ layer: 'L3', title: memoryActions(item.actions), detail: (item.targetTables || []).join(' · ') || '重新绑定目标表', state: _MEMORY_STATUS_LABELS[item.status] || item.status }));
+    (Array.isArray(used.l4) ? used.l4 : []).forEach(item => usedItems.push({ layer: 'L4', title: item.questionPreview || '脱敏执行片段', detail: memoryActions(item.actions), state: item.corrected ? '已纠错' : (item.outcome === 'succeeded' ? '成功' : '失败') }));
+    if (usedItems.length) {
+      inner += '<div class="answer-memory-sources"><div class="answer-memory-source-head">本轮召回来源</div>';
+      usedItems.slice(0, 8).forEach(item => { inner += '<div><b>' + esc(item.layer) + '</b><span><strong>' + esc(item.title) + '</strong><small>' + esc(item.detail) + '</small></span><em>' + esc(item.state || '') + '</em></div>'; });
+      inner += '</div>';
+    }
+    inner += '</details>';
   }
   // NL-to-Database 操作计划：自然语言如何被解释、会影响什么，一眼可审计。
   // 值按语义着色：只读/自动选择/已执行=绿，写入/等待确认或补充/中风险=黄，失败/取消/高风险=红。
@@ -2507,6 +2548,7 @@ function buildWelcome() {
   renderChips();
 }
 function resetDbDependentViews() {
+  if ($('#view-memory').classList.contains('active')) loadMemoryWorkspace();
   if ($('#view-semantics').classList.contains('active')) {
     resetSemanticForm();
     loadSemanticWorkspace();
@@ -2990,13 +3032,14 @@ $('#cSubmit').onclick = async () => {
 })();
 
 /* ============ 工作区导航 ============ */
-const _VIEWS = { sessions: 'view-sessions', charts: 'view-charts', schedules: 'view-schedules', semantics: 'view-semantics', audit: 'view-audit' };
+const _VIEWS = { sessions: 'view-sessions', charts: 'view-charts', schedules: 'view-schedules', memory: 'view-memory', semantics: 'view-semantics', audit: 'view-audit' };
 function switchView(name) {
   const vid = _VIEWS[name] || _VIEWS.sessions;
   $$('.view').forEach(v => v.classList.toggle('active', v.id === vid));
   $$('#navTabs .nav-tab').forEach(t => t.classList.toggle('active', t.dataset.view === name));
   if (name === 'charts') { if (state.dbs.length) refreshChartDb(); else loadDatabases().then(refreshChartDb); }
   if (name === 'schedules') { loadSchedules(); loadSchedLogs(); if (state.dbs.length) fillSchedDb(); else loadDatabases().then(fillSchedDb); }
+  if (name === 'memory') { loadMemoryWorkspace(); }
   if (name === 'semantics') { loadSemanticWorkspace(); }
   if (name === 'audit') { loadAudit(); }
 }
@@ -3012,6 +3055,7 @@ $$('#navTabs .nav-tab').forEach(t => {
 const _AUDIT_CATEGORY_LABELS = {
   nl_operation: '自然语言操作', write_confirmation: '写确认',
   write_execution: '写执行', semantic_change: '语义变更',
+  memory_change: '记忆变更',
   schedule_change: '调度变更', schedule_execution: '调度执行',
   audit_backup: '账本备份', audit_control: '审计处置',
   access_control: '权限控制', system: '系统',
@@ -3564,6 +3608,94 @@ function fillSelect(sel, items, placeholder) {
   });
   if (cur && [...sel.options].some(o => o.value === cur)) sel.value = cur;
 }
+
+/* ============ 分层记忆 ============ */
+var _memoryWorkspace = null;
+var _MEMORY_STATUS_LABELS = { candidate: '候选', promoted: '已晋级', disabled: '已停用', active: '有效' };
+var _MEMORY_ACTION_LABELS = {
+  inspect_schema: '检查结构', search_schema: '搜索结构', search_values: '跨表查值',
+  sample_rows: '抽样', find_relations: '检查关系', run_sql: '只读查询',
+  retrieve: '证据检索', query: '数据查询', analyze: '组合分析',
+  select: '数据查询',
+};
+function memoryActions(items) {
+  return (Array.isArray(items) ? items : []).map(item => _MEMORY_ACTION_LABELS[item] || item).join(' → ') || '无可复用动作';
+}
+function memoryTables(items) {
+  return (Array.isArray(items) && items.length) ? items.join(' · ') : '由当前问题重新绑定';
+}
+function renderMemoryWorkspace(memory) {
+  _memoryWorkspace = memory || null;
+  $('#memoryClear').disabled = !memory || !roleCan('manage_memory');
+  const counts = (memory && memory.counts) || {};
+  $('#memoryL1Count').textContent = String(counts.l1 || 0) + ' 个引用';
+  $('#memoryL2Count').textContent = String(counts.l2 || 0) + ' 条';
+  $('#memoryL3Count').textContent = String(counts.l3 || 0) + ' 条';
+  $('#memoryL4Count').textContent = String(counts.l4 || 0) + ' 条';
+  $('#memoryBoundary').textContent = memory
+    ? '当前数据库 · 当前授权 · 结构 ' + String(memory.schemaFingerprint || '').slice(0, 10)
+      + (memory.staleEpisodeCount ? ' · ' + memory.staleEpisodeCount + ' 条旧结构记录未参与召回' : '')
+    : '等待选择数据库';
+  const rules = memory && memory.policy && Array.isArray(memory.policy.rules) ? memory.policy.rules : [];
+  $('#memoryPolicy').innerHTML = rules.length
+    ? '<ol class="memory-policy-list">' + rules.map(rule => '<li>' + esc(rule) + '</li>').join('') + '</ol>'
+    : '<div class="empty-tip">边界规则不可用</div>';
+  const facts = memory && Array.isArray(memory.facts) ? memory.facts : [];
+  $('#memoryFacts').innerHTML = facts.length ? facts.map(item => `<article class="memory-object">
+    <div class="memory-object-title"><strong>${esc(memoryTables(item.targetTables))}</strong><span>${esc(item.supportCount)} 次支持 · ${esc(item.correctionCount)} 次纠错</span></div>
+    <p>${esc(memoryActions(item.actions))}</p><small>触发：${esc((item.triggers || []).slice(0, 8).join(' · ') || '结构化问题特征')}</small>
+  </article>`).join('') : '<div class="empty-tip">暂无执行验证的路径事实</div>';
+  const strategies = memory && Array.isArray(memory.strategies) ? memory.strategies : [];
+  $('#memoryStrategies').innerHTML = strategies.length ? strategies.map(item => {
+    const disabled = item.status === 'disabled';
+    const canManage = roleCan('manage_memory');
+    return `<article class="memory-object strategy ${esc(item.status)}">
+      <div class="memory-object-title"><strong>${esc(memoryActions(item.actions))}</strong><span class="memory-status ${esc(item.status)}">${esc(_MEMORY_STATUS_LABELS[item.status] || item.status)}</span></div>
+      <p>${esc(memoryTables(item.targetTables))}</p>
+      <div class="memory-object-foot"><small>${esc(item.supportCount)} / ${esc(item.promotionThreshold)} 次支持 · ${esc(item.correctionCount)} 次纠错</small><button class="btn memory-strategy-toggle" data-strategy-id="${esc(item.id)}" data-enabled="${disabled ? 'true' : 'false'}" ${canManage ? '' : 'disabled'}>${disabled ? '恢复策略' : '停用策略'}</button></div>
+    </article>`;
+  }).join('') : '<div class="empty-tip">首次或每次纠错后取得 3 次成功证据才会晋级</div>';
+  const episodes = memory && Array.isArray(memory.episodes) ? memory.episodes : [];
+  $('#memoryEpisodes').innerHTML = episodes.length ? episodes.map(item => `<details class="memory-object episode ${item.corrected ? 'corrected' : ''}">
+    <summary><div class="memory-object-title"><strong>${esc(item.questionPreview || '脱敏执行片段')}</strong><span>${item.corrected ? '已被纠错' : esc(item.outcome === 'succeeded' ? '成功' : '失败')}</span></div><small>${esc(auditTime(item.createdAt))}</small></summary>
+    <div class="memory-episode-detail"><p>${esc(memoryActions(item.actions))}</p><span>目标：${esc(memoryTables(item.targetTables))}</span><span>结果 ${esc(item.resultCount)} · 证据 ${esc(item.evidenceCount)}</span></div>
+  </details>`).join('') : '<div class="empty-tip">暂无脱敏执行记录</div>';
+}
+async function loadMemoryWorkspace() {
+  if (!state.dbId) { renderMemoryWorkspace(null); return; }
+  try {
+    const result = await api('/db/memory?dbId=' + encodeURIComponent(state.dbId));
+    renderMemoryWorkspace(result.memory || null);
+  } catch (e) {
+    renderMemoryWorkspace(null);
+    $('#memoryEpisodes').innerHTML = '<div class="empty-tip">加载失败：' + esc(e.message) + '</div>';
+  }
+}
+async function toggleMemoryStrategy(strategyId, enabled) {
+  if (!state.dbId || !roleCan('manage_memory')) return;
+  try {
+    await api('/db/memory/strategies/' + encodeURIComponent(strategyId), {
+      method: 'POST', body: JSON.stringify({ dbId: state.dbId, enabled }),
+    });
+    await loadMemoryWorkspace();
+    toast(enabled ? '策略已恢复；未达到门槛时仍保持候选' : '策略已停用');
+  } catch (e) { toast('更新失败：' + e.message); }
+}
+async function clearMemoryWorkspace() {
+  if (!state.dbId || !roleCan('manage_memory')) return;
+  if (!uiConfirm('清空当前数据库、当前授权范围和当前结构版本下的 L1–L4 记忆？会话与审计记录不会删除。')) return;
+  try {
+    await api('/db/memory?dbId=' + encodeURIComponent(state.dbId) + '&confirm=clear', { method: 'DELETE' });
+    await loadMemoryWorkspace();
+    toast('当前范围的分层记忆已清空');
+  } catch (e) { toast('清空失败：' + e.message); }
+}
+$('#memoryRefresh').onclick = loadMemoryWorkspace;
+$('#memoryClear').onclick = clearMemoryWorkspace;
+$('#memoryStrategies').onclick = event => {
+  const button = event.target.closest('.memory-strategy-toggle');
+  if (button) toggleMemoryStrategy(button.dataset.strategyId, button.dataset.enabled === 'true');
+};
 
 /* ============ 语义目录 ============ */
 let _semanticEntries = [];

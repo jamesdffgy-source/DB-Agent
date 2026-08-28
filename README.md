@@ -25,7 +25,7 @@ DBQuill turns a request into a typed, reviewable database operation before anyth
 - **Ask naturally:** inspect schemas, search rows, calculate grouped metrics, compare periods, and continue with follow-up questions.
 - **See useful results:** follow the public intent/action/observation stages, then inspect tables, charts, evidence, and expandable audit details.
 - **Write deliberately:** use a schema-based form or validate a multi-sheet Excel workbook, preview the change, then confirm one transactional write.
-- **See memory honestly:** each answer shows whether session context, a topic anchor, or the persistent database semantic catalog was used; automatic cross-session personal memory is not claimed.
+- **Learn from verified reads:** completed read paths become scoped, redacted execution episodes; repeated successful routes can be promoted into typed read-only strategies, while corrections demote them and users can disable or clear them.
 - **Keep control locally:** database credentials, model profiles, sessions, audit records, and uploads stay outside the source tree.
 
 ## See it in 60 seconds
@@ -86,6 +86,8 @@ flowchart LR
     N --> G[Authorization and semantic gates]
     M --> G
     G --> R[Read-only executor]
+    R --> E[Scoped execution memory]
+    E -. verified route hints .-> P
     G --> W[Write validation and preview]
     W --> U[Explicit confirmation]
     U --> T[Transaction]
@@ -121,6 +123,7 @@ Public benchmarks are diagnostic evidence, not templates for hard-coded SQL. The
 - Remote writes require an explicit controlled-write connection; only DML is enabled, while remote DDL remains blocked.
 - Scheduled natural-language work cannot approve writes automatically.
 - Audit records retain controlled metadata and hashes, not raw prompts, SQL, credentials, or result rows.
+- Layered memory stores redacted question previews and typed route metadata only; it is isolated by database, access scope, and schema fingerprint, and never stores SQL or result rows.
 - Model credentials are stored in ignored local configuration and are never required in repository files.
 
 Report sensitive issues privately as described in [SECURITY.md](SECURITY.md). Use [SUPPORT.md](SUPPORT.md) for ordinary setup questions and bug reports.

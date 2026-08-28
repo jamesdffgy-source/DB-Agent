@@ -4235,3 +4235,298 @@ html[lang="en"] .nav-tab {
     text-align: left;
   }
 }
+
+/* Layered memory is presented as a compact evidence ledger, not a generic KPI grid. */
+.memory-workspace {
+  width: min(1180px, calc(100% - 40px));
+  margin: 26px auto 60px;
+  overflow: hidden;
+}
+
+.memory-workspace-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 22px 24px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.memory-workspace-head > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.memory-workspace-head > div:first-child > span {
+  font-family: var(--serif);
+  font-size: 21px;
+  font-weight: 650;
+}
+
+.memory-workspace-head small {
+  color: var(--text-3);
+  font: 600 9.5px var(--mono);
+}
+
+.memory-workspace-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.memory-principle {
+  display: grid;
+  grid-template-columns: minmax(250px, .8fr) minmax(360px, 1.2fr);
+  gap: 28px;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(110deg, #f2f6f4, #f8f7f2 62%, #f4f6f8);
+}
+
+.memory-principle span {
+  color: #315f50;
+  font: 700 10px var(--mono);
+  letter-spacing: .08em;
+}
+
+.memory-principle p {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.75;
+}
+
+.memory-ledger {
+  display: grid;
+}
+
+.memory-ledger-layer {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  min-height: 112px;
+  border-bottom: 1px solid var(--line);
+}
+
+.memory-ledger-layer:last-child {
+  border-bottom: 0;
+}
+
+.memory-ledger-layer > header {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  gap: 15px;
+  align-content: start;
+  padding: 22px 20px 20px 24px;
+  border-right: 1px solid var(--line);
+  background: #f8f8f5;
+}
+
+.memory-ledger-layer > header > b {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border: 1px solid #b8c3bd;
+  border-radius: 50%;
+  color: #315f50;
+  font: 750 12px var(--mono);
+}
+
+.memory-ledger-layer.l1 > header > b { color: #315f75; border-color: #b5c3ce; }
+.memory-ledger-layer.l2 > header > b { color: #665a2f; border-color: #c9c09d; }
+.memory-ledger-layer.l3 > header > b { color: #704e62; border-color: #cbb7c3; }
+.memory-ledger-layer.l4 > header > b { color: #655145; border-color: #c7b9ad; }
+
+.memory-ledger-layer > header > div {
+  display: grid;
+  gap: 5px;
+  padding-top: 4px;
+}
+
+.memory-ledger-layer > header strong {
+  font-family: var(--serif);
+  font-size: 15px;
+}
+
+.memory-ledger-layer > header small {
+  color: var(--text-3);
+  font: 600 9px var(--mono);
+}
+
+.memory-layer-body {
+  min-width: 0;
+  padding: 18px 22px;
+}
+
+.memory-layer-body > p {
+  max-width: 680px;
+  margin: 6px 0;
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.memory-policy-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 24px;
+  margin: 0;
+  padding: 0;
+  counter-reset: memory-policy;
+  list-style: none;
+}
+
+.memory-policy-list li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 7px;
+  color: var(--text-2);
+  font-size: 10.5px;
+  line-height: 1.55;
+  counter-increment: memory-policy;
+}
+
+.memory-policy-list li::before {
+  content: counter(memory-policy, decimal-leading-zero);
+  color: #668074;
+  font: 650 8px var(--mono);
+}
+
+.memory-object-list {
+  display: grid;
+  gap: 8px;
+}
+
+.memory-object {
+  display: grid;
+  gap: 6px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfbf9;
+}
+
+.memory-object-title,
+.memory-object-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.memory-object-title strong {
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-object-title span,
+.memory-object small,
+.memory-object-foot small {
+  color: var(--text-3);
+  font: 600 9px var(--mono);
+}
+
+.memory-object p {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 10.5px;
+}
+
+.memory-status {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #edf1ef;
+}
+
+.memory-status.promoted { color: #28634e; background: #e7f1ec; }
+.memory-status.candidate { color: #746126; background: #f4f0df; }
+.memory-status.disabled { color: #776963; background: #eeeae8; }
+.memory-strategy-toggle { min-height: 27px; padding: 4px 9px; font-size: 9px; }
+
+.memory-object.episode {
+  padding: 0;
+}
+
+.memory-object.episode > summary {
+  display: grid;
+  gap: 4px;
+  padding: 11px 12px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.memory-object.episode > summary::-webkit-details-marker { display: none; }
+.memory-object.episode.corrected { border-color: #d7c6bd; background: #fbf7f5; }
+
+.memory-episode-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--text-3);
+  font-size: 9.5px;
+}
+
+.memory-episode-detail p { width: 100%; }
+
+.answer-memory-sources {
+  display: grid;
+  gap: 0;
+  padding: 0 12px 12px;
+}
+
+.answer-memory-source-head {
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  color: var(--text-3);
+  font: 650 9px var(--mono);
+  letter-spacing: .06em;
+}
+
+.answer-memory-sources > div:not(.answer-memory-source-head) {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  min-height: 37px;
+  border-top: 1px solid rgba(215, 219, 216, .7);
+}
+
+.answer-memory-sources b {
+  color: #486987;
+  font: 700 9px var(--mono);
+}
+
+.answer-memory-sources span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.answer-memory-sources strong {
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.answer-memory-sources small,
+.answer-memory-sources em {
+  color: var(--text-3);
+  font-size: 9px;
+  font-style: normal;
+}
+
+@media (max-width: 760px) {
+  .memory-workspace { width: calc(100% - 20px); margin-top: 12px; }
+  .memory-workspace-head,
+  .memory-principle { align-items: flex-start; grid-template-columns: 1fr; flex-direction: column; }
+  .memory-ledger-layer { grid-template-columns: 1fr; }
+  .memory-ledger-layer > header { border-right: 0; border-bottom: 1px solid var(--line); }
+  .memory-policy-list { grid-template-columns: 1fr; }
+  .memory-object-title { align-items: flex-start; flex-direction: column; }
+}
