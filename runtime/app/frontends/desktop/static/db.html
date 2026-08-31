@@ -538,13 +538,22 @@
           <button class="btn composer-data-tool" id="excelExportBtn" title="把当前权限范围内的数据导出为多工作表 Excel">↓ 导出 Excel</button>
           <button class="btn composer-create-table" id="createTableBtn" title="为当前本地 SQLite 数据库自定义创建表">＋ 新建表</button>
         </div>
+        <div class="composer-file-task" id="composerFileTask" hidden>
+          <div class="file-task-mark" aria-hidden="true">DATA</div>
+          <div class="file-task-copy">
+            <strong id="fileTaskName"></strong>
+            <span id="fileTaskMeta">发送后先判断任务，再安全接入数据</span>
+          </div>
+          <button type="button" class="file-task-remove" id="fileTaskRemove" aria-label="移除附件" title="移除附件">×</button>
+        </div>
         <div class="composer-box">
+          <button type="button" class="composer-attach" id="composerAttachBtn" data-allowed-title="上传数据库、CSV 或 Excel，并结合本条指令处理" aria-label="添加数据文件" title="添加数据文件">＋</button>
           <textarea id="inp" class="inp" rows="1" placeholder="输入问题，或先打个招呼…"></textarea>
           <button class="send-btn" id="sendBtn" title="发送">
             <svg viewBox="0 0 24 24"><path d="M3 11.5 21 3l-8.5 18-2.1-7.4L3 11.5z"/></svg>
           </button>
         </div>
-        <div class="composer-hint">Enter 发送 · Shift+Enter 换行 · Excel 可作为新数据库接入，也可预检后并入当前库</div>
+        <div class="composer-hint">可拖入 SQLite / CSV / XLSX，并在同一条消息里说明查询、分析、清洗、写入或并入要求</div>
       </div>
     </div>
   </section>
@@ -1191,6 +1200,9 @@ const state = {
   writeForm: null,         // { dbId, payload } 结构化单行录入草稿
   createTable: null,       // { dbId, returnToWrite } 受控 DDL 草稿
   excelImport: null,       // { dbId, confirmId, preview } Excel 批量写确认单
+  fileTask: null,          // { file, extension } 与本条自然语言指令一起执行
+  filePickerMode: 'task',  // task | database
+  fileUploading: false,
   access: {
     role: 'viewer', label: '查看者',
     databaseScope: { mode: 'all', databaseCount: 0, tableScopeTableCount: 0, columnScopeColumnCount: 0, rowScopeFilterCount: 0 },
@@ -1257,6 +1269,7 @@ function applyAccessContext(access) {
   state.access = access || state.access;
   document.body.dataset.role = state.access.role || 'viewer';
   setRoleDisabled('ncUpload', 'manage_workspace', '当前会话没有修改工作区的权限');
+  setRoleDisabled('composerAttachBtn', 'manage_workspace', '当前会话没有上传数据文件的权限');
   setRoleDisabled('ncConnect', 'manage_workspace', '当前会话没有连接新数据库的权限');
   setRoleDisabled('cSubmit', 'manage_workspace', '当前会话没有修改工作区的权限');
   setRoleDisabled('sSave', 'manage_workspace', '当前会话没有修改工作区的权限');
@@ -1288,6 +1301,49 @@ function fmtNum(v) {
   const locale = window.DBQuillI18n && window.DBQuillI18n.locale === 'en' ? 'en-US' : 'zh-CN';
   if (typeof v === 'number') return Number.isInteger(v) ? v.toLocaleString(locale) : v.toLocaleString(locale, { maximumFractionDigits: 4 });
   return String(v);
+}
+function fileExtension(file) {
+  const name = String(file && file.name || '');
+  return name.includes('.') ? name.slice(name.lastIndexOf('.')).toLowerCase() : '';
+}
+function formatFileSize(bytes) {
+  const size = Number(bytes || 0);
+  if (size < 1024) return size + ' B';
+  if (size < 1024 * 1024) return (size / 1024).toFixed(size < 10 * 1024 ? 1 : 0) + ' KB';
+  return (size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 1 : 0) + ' MB';
+}
+function validateDataFile(file) {
+  const extension = fileExtension(file);
+  if (extension === '.xls') return '旧版 Excel .xls 暂不支持，请先转换为 .xlsx 后再上传。';
+  if (!['.db', '.sqlite', '.sqlite3', '.csv', '.xlsx'].includes(extension)) {
+    return '仅支持 SQLite、CSV 和 XLSX 数据文件';
+  }
+  if (Number(file.size || 0) > 200 * 1024 * 1024) return '文件过大（>200MB）';
+  if (!Number(file.size || 0)) return '不能上传空文件';
+  return '';
+}
+function renderFileTask() {
+  const bar = $('#composerFileTask');
+  const task = state.fileTask;
+  bar.hidden = !task;
+  if (!task) return;
+  $('#fileTaskName').textContent = task.file.name;
+  $('#fileTaskMeta').textContent = formatFileSize(task.file.size) + ' · ' + uiT('发送后由模型判断任务入口；写入仍需确认');
+}
+function clearFileTask() {
+  state.fileTask = null;
+  renderFileTask();
+}
+function stageFileTask(file) {
+  if (state.running || state.fileUploading) { toast('上一条还在执行中'); return false; }
+  const error = validateDataFile(file);
+  if (error) { toast(error, 4800); return false; }
+  if (!roleCan('manage_workspace')) { toast('当前会话没有上传数据文件的权限'); return false; }
+  state.fileTask = { file, extension: fileExtension(file) };
+  renderFileTask();
+  inp.focus();
+  toast('附件已就绪，请在输入框说明要完成的数据库任务');
+  return true;
 }
 
 /* ---------- 数据库加载 / 上传 ---------- */
@@ -1521,12 +1577,16 @@ async function openSession(s) {
 }
 
 /* ---------- 消息渲染 ---------- */
-function addUserMsg(text) {
+function addUserMsg(text, attachment = null) {
   const w = $('#welcome');
   if (w) w.remove();
   const wrap = document.createElement('div');
   wrap.className = 'msg user';
-  wrap.innerHTML = '<div class="bubble">' + esc(text) + '</div>';
+  const file = attachment && attachment.name
+    ? '<div class="user-file-task"><b>DATA</b><span>' + esc(attachment.name) +
+      (attachment.size ? ' · ' + esc(formatFileSize(attachment.size)) : '') + '</span></div>'
+    : '';
+  wrap.innerHTML = '<div class="bubble">' + file + '<div>' + esc(text) + '</div></div>';
   $('#chatScroll').appendChild(wrap);
   scrollDown();
 }
@@ -1572,9 +1632,9 @@ function scrollDown() {
 }
 
 /* ---------- 提问主流程 ---------- */
-async function ask(question) {
+async function ask(question, options = {}) {
   if (!state.dbId) { toast('请先选择数据库'); return; }
-  addUserMsg(question);
+  addUserMsg(question, options.attachment || null);
   const runCard = addRunCard();
   $('#inp').value = '';
   autoGrow();
@@ -2523,11 +2583,22 @@ inp.addEventListener('keydown', e => {
 function setBusy(b) {
   $('#sendBtn').disabled = b;
   inp.disabled = b;
+  $('#composerAttachBtn').disabled = b || !roleCan('manage_workspace');
+  $('#fileTaskRemove').disabled = b;
 }
 async function send(q) {
   const text = (q != null ? q : inp.value).trim();
+  if (!text && state.fileTask) {
+    toast('请在输入框说明要对这个文件完成什么数据库任务');
+    inp.focus();
+    return;
+  }
   if (!text) return;
-  if (state.running) { toast('上一条还在执行中'); return; }
+  if (state.running || state.fileUploading) { toast('上一条还在执行中'); return; }
+  if (state.fileTask) {
+    await executeFileTask(text);
+    return;
+  }
   await ask(text);
 }
 $('#sendBtn').onclick = () => send();
@@ -2637,7 +2708,11 @@ async function openNewChatSheet() {
 }
 $('#sideNewChatBtn').onclick = openNewChatSheet;
 $('#ncCancel').onclick = () => closeModal('#newChatSheet');
-$('#ncUpload').onclick = () => { closeModal('#newChatSheet'); $('#fileInput').click(); };
+$('#ncUpload').onclick = () => {
+  closeModal('#newChatSheet');
+  state.filePickerMode = 'database';
+  $('#fileInput').click();
+};
 $('#ncConnect').onclick = () => { closeModal('#newChatSheet'); openModal('#connectModal'); };
 $('#dbChipBtn').onclick = () => {
   if (state.sessionId) {
@@ -2814,8 +2889,8 @@ function renderExcelImportPreview(preview) {
   confirmButton.title = allowed ? '重新校验后在单一事务中写入' : '当前角色不能批准该规模的导入';
 }
 async function prepareExcelImport(file) {
-  if (!state.dbId) { toast('请先选择数据库'); return; }
-  if (file.size > 25 * 1024 * 1024) { toast('Excel 导入文件不能超过 25MB'); return; }
+  if (!state.dbId) { toast('请先选择数据库'); return false; }
+  if (file.size > 25 * 1024 * 1024) { toast('Excel 导入文件不能超过 25MB'); return false; }
   const dbId = state.dbId;
   const form = new FormData();
   form.append('file', file, file.name);
@@ -2846,8 +2921,10 @@ async function prepareExcelImport(file) {
     renderExcelImportPreview(payload.preview);
     openModal('#excelImportModal');
     toast('预检完成，确认前数据库尚未变化');
+    return true;
   } catch (error) {
     toast('Excel 预检失败：' + error.message, 5600);
+    return false;
   }
 }
 async function decideExcelImport(approved) {
@@ -2916,64 +2993,135 @@ $('#excelImportCancel').onclick = () => void decideExcelImport(false);
 $('#excelExportBtn').onclick = () => void exportDatabaseExcel();
 
 /* ---------- 上传 ---------- */
-/* 顶栏上传按钮已移除；上传入口为选库浮层中的“上传数据” */
-$('#fileInput').onchange = async e => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const extension = file.name.includes('.') ? file.name.slice(file.name.lastIndexOf('.')).toLowerCase() : '';
-  if (extension === '.xls') {
-    e.target.value = '';
-    toast('旧版 Excel .xls 暂不支持，请先转换为 .xlsx 后再上传。');
-    return;
-  }
-  if (file.size > 200 * 1024 * 1024) {
-    e.target.value = '';
-    toast('文件过大（>200MB）');
-    return;
-  }
+async function uploadDatabaseFile(file) {
   const form = new FormData();
   form.append('file', file, file.name);
-  try {
-    const bridgeStatus = await api('/status');
-    if (bridgeStatus.uploadProtocol !== 'multipart-v1') {
-      throw new Error('本地服务版本过旧，请完全退出并重新启动 DBQuill');
-    }
-    const j = await new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/upload?sid=' + encodeURIComponent(state.sessionId || 'web'));
-      xhr.responseType = 'json';
-      xhr.upload.onprogress = event => {
-        const total = event.lengthComputable && event.total ? event.total : file.size;
-        const percent = total ? Math.round(event.loaded * 100 / total) : null;
-        uploadToast('正在上传：' + file.name + (percent == null ? '' : '（' + percent + '%）'), percent);
-      };
-      xhr.upload.onload = () => uploadToast('正在检查数据库：' + file.name);
-      xhr.onerror = () => reject(new Error('本地上传连接中断'));
-      xhr.onabort = () => reject(new Error('上传已取消'));
-      xhr.onload = () => {
-        const payload = xhr.response;
-        if (xhr.status < 200 || xhr.status >= 300 || (payload && payload.ok === false)) {
-          reject(new Error((payload && payload.error) || ('HTTP ' + xhr.status)));
-          return;
-        }
-        resolve(payload || {});
-      };
-      uploadToast('正在上传：' + file.name + '（0%）', 0);
-      xhr.send(form);
-    });
-    if (j.db) {
-      toast('已接入数据库：' + j.db.name + '（' + j.db.tables.length + ' 张表）');
-      await loadDatabases();
-      chooseDatabase(j.db.id);
-    } else {
-      toast('文件已上传（未接入数据库）');
-    }
-  } catch (err) {
-    toast('上传失败：' + err.message, 5200);
-  } finally {
-    e.target.value = '';
+  const bridgeStatus = await api('/status');
+  if (bridgeStatus.uploadProtocol !== 'multipart-v1') {
+    throw new Error('本地服务版本过旧，请完全退出并重新启动 DBQuill');
   }
+  return await new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/upload?sid=' + encodeURIComponent(state.sessionId || 'web'));
+    xhr.responseType = 'json';
+    xhr.upload.onprogress = event => {
+      const total = event.lengthComputable && event.total ? event.total : file.size;
+      const percent = total ? Math.round(event.loaded * 100 / total) : null;
+      uploadToast(uiT('正在上传：') + file.name + (percent == null ? '' : ' (' + percent + '%)'), percent);
+    };
+    xhr.upload.onload = () => uploadToast(uiT('正在检查数据库：') + file.name);
+    xhr.onerror = () => reject(new Error('本地上传连接中断'));
+    xhr.onabort = () => reject(new Error('上传已取消'));
+    xhr.onload = () => {
+      const payload = xhr.response;
+      if (xhr.status < 200 || xhr.status >= 300 || (payload && payload.ok === false)) {
+        reject(new Error((payload && payload.error) || ('HTTP ' + xhr.status)));
+        return;
+      }
+      resolve(payload || {});
+    };
+    uploadToast(uiT('正在上传：') + file.name + ' (0%)', 0);
+    xhr.send(form);
+  });
+}
+
+async function attachDatabaseFile(file) {
+  const error = validateDataFile(file);
+  if (error) { toast(error, 4800); return false; }
+  try {
+    const payload = await uploadDatabaseFile(file);
+    if (!payload.db) throw new Error(payload.warning || '文件未能转换为可用数据库');
+    await loadDatabases();
+    chooseDatabase(payload.db.id);
+    toast('已接入数据库：' + payload.db.name + '（' + payload.db.tables.length + ' 张表）');
+    return true;
+  } catch (error) {
+    toast('上传失败：' + error.message, 5200);
+    return false;
+  }
+}
+
+async function executeFileTask(instruction) {
+  const task = state.fileTask;
+  if (!task) return;
+  const attachment = { name: task.file.name, size: task.file.size };
+  state.fileUploading = true;
+  setBusy(true);
+  uploadToast(uiT('正在判断文件任务：') + task.file.name);
+  try {
+    const routed = await api('/db/file-task/route', {
+      method: 'POST',
+      body: JSON.stringify({
+        fileName: task.file.name,
+        instruction,
+        currentDbId: state.dbId,
+        llmCfg: state.llmCfg,
+      }),
+    });
+    const route = routed.route || {};
+    if (route.mode === 'merge_current') {
+      const prepared = await prepareExcelImport(task.file);
+      if (prepared) {
+        addUserMsg(instruction, attachment);
+        inp.value = '';
+        autoGrow();
+        clearFileTask();
+      }
+      return;
+    }
+
+    const payload = await uploadDatabaseFile(task.file);
+    if (!payload.db) throw new Error(payload.warning || '文件未能转换为可用数据库');
+    clearFileTask();
+    await loadDatabases();
+    chooseDatabase(payload.db.id);
+    toast('文件已接入，正在执行你的数据库任务');
+    await ask(instruction, { attachment });
+  } catch (error) {
+    toast(uiT('文件任务失败：') + error.message, 5600);
+  } finally {
+    state.fileUploading = false;
+    setBusy(Boolean(state.running));
+  }
+}
+
+$('#composerAttachBtn').onclick = () => {
+  state.filePickerMode = 'task';
+  $('#fileInput').click();
 };
+$('#fileTaskRemove').onclick = clearFileTask;
+$('#fileInput').onchange = async event => {
+  const file = event.target.files[0];
+  const mode = state.filePickerMode;
+  event.target.value = '';
+  state.filePickerMode = 'task';
+  if (!file) return;
+  if (mode === 'database') await attachDatabaseFile(file);
+  else stageFileTask(file);
+};
+
+const composer = document.querySelector('.composer');
+let composerDragDepth = 0;
+['dragenter', 'dragover'].forEach(type => composer.addEventListener(type, event => {
+  if (!event.dataTransfer || !Array.from(event.dataTransfer.types || []).includes('Files')) return;
+  event.preventDefault();
+  if (type === 'dragenter') composerDragDepth += 1;
+  composer.classList.add('is-file-drag');
+  event.dataTransfer.dropEffect = 'copy';
+}));
+composer.addEventListener('dragleave', event => {
+  if (!event.dataTransfer || !Array.from(event.dataTransfer.types || []).includes('Files')) return;
+  composerDragDepth = Math.max(0, composerDragDepth - 1);
+  if (!composerDragDepth) composer.classList.remove('is-file-drag');
+});
+composer.addEventListener('drop', event => {
+  event.preventDefault();
+  composerDragDepth = 0;
+  composer.classList.remove('is-file-drag');
+  const files = Array.from(event.dataTransfer && event.dataTransfer.files || []);
+  if (files.length > 1) { toast('每条任务只能添加一个数据文件'); return; }
+  if (files[0]) stageFileTask(files[0]);
+});
 
 /* ---------- 连接远程库（顶栏按钮已移除；入口为选库浮层“连接库”） ---------- */
 function openModal(id) { $(id).classList.add('show'); }

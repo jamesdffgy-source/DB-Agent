@@ -4107,6 +4107,150 @@ html[lang="en"] .nav-tab {
   font-size: 10.5px;
 }
 
+/* One file and one instruction form a single database task. */
+.composer-file-task {
+  width: min(100%, 780px);
+  max-width: 780px;
+  min-height: 48px;
+  margin: 0 auto 7px;
+  padding: 7px 9px;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 10px;
+  box-sizing: border-box;
+  border: 1px solid #c8c5bb;
+  border-radius: 10px;
+  background: #f9f8f3;
+  box-shadow: 0 3px 10px rgba(36, 35, 31, .035);
+}
+
+.composer-file-task[hidden] {
+  display: none;
+}
+
+.file-task-mark {
+  display: grid;
+  place-items: center;
+  height: 32px;
+  border: 1px solid #22211e;
+  border-radius: 5px;
+  color: #22211e;
+  font: 700 8px/1 var(--mono);
+  letter-spacing: .12em;
+}
+
+.file-task-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.file-task-copy strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-task-copy span {
+  overflow: hidden;
+  color: var(--text-3);
+  font: 500 9.5px/1.3 var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-task-remove,
+.composer-attach {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.file-task-remove {
+  width: 26px;
+  height: 26px;
+  border-color: transparent;
+  border-radius: 6px;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.file-task-remove:hover {
+  border-color: var(--line);
+  background: #eceae3;
+  color: var(--text);
+}
+
+.composer-attach {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  margin-bottom: 2px;
+  border-radius: 8px;
+  font: 400 21px/1 var(--font);
+}
+
+.composer-attach:hover {
+  border-color: #77746c;
+  background: #f1f0eb;
+  color: #171715;
+}
+
+.composer-attach:disabled,
+.file-task-remove:disabled {
+  cursor: not-allowed;
+  opacity: .42;
+}
+
+.composer.is-file-drag .composer-box {
+  border-color: #171715;
+  outline: 2px dashed rgba(23, 23, 21, .38);
+  outline-offset: 4px;
+  background: #fbfaf5;
+}
+
+.user-file-task {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, .2);
+}
+
+.user-file-task b {
+  padding: 3px 5px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  font: 700 7.5px var(--mono);
+  letter-spacing: .08em;
+}
+
+.user-file-task span {
+  overflow: hidden;
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 700px) {
+  .composer-file-task {
+    grid-template-columns: 36px minmax(0, 1fr) 26px;
+  }
+
+  .composer-attach {
+    flex-basis: 34px;
+    width: 34px;
+    height: 34px;
+  }
+}
+
 .excel-import-modal {
   width: min(960px, 94vw);
   max-width: none;

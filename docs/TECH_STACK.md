@@ -31,6 +31,7 @@
 | `RelationalGroupedMetricsPlan 1.0` | 物理 schema 绑定的通用分组多指标 IR；当问句含一个精确维度、2–6 个 COUNT/SUM/AVG/MIN/MAX、有界字面量过滤，且所有指标属于同一事实表时编译。同表直接执行；两表仅接受唯一声明 FK 或用户精确等值边，拒绝多 FK 歧义和多事实扇出。方言渲染支持 SQLite/MySQL/PostgreSQL，渲染前复核列、数值类型、聚合、关系、过滤和排序；未完整表达的问句不部分执行。 |
 | `StructuredInsertWorkflow` | SQLite 与显式启用读写的 MySQL/PostgreSQL 单行录入执行器；消费已结构化识别的 `guided_insert`，只暴露授权 schema 和经 `SQLSecurity` 读取的一行示例。模型只决定交互意图和建议表，不生成表单 SQL；提交使用字段白名单、值/默认/NULL 显式模式和本地类型化构造单条 INSERT，然后复用 `WriteSecurity → WritePreviewer 回滚 → WriteProposal → confirm_write`；不支持 BLOB、远程只读连接或行级凭据 |
 | `StructuredCreateTableWorkflow` | 本地 SQLite 自定义建表执行器；后端重新校验 1–64 个字段、标识符、8 类 SQLite 类型白名单、单主键/整数自增/必填/唯一与受控默认值，确定性编译单条 CREATE TABLE。不让模型生成 DDL，必须复用写校验、事务回滚预览、一次性确认单、admin 批准、审计和执行前复检；远程或任何数据范围受限凭据拒绝 DDL |
+| `FileTaskRouter` | 上传字节前的窄文件任务路由。非 XLSX、没有当前库或没有并入信号时确定性打开为独立数据源，避免普通分析多一次模型往返；XLSX 与当前库并存且指令含通用并入候选信号时，由当前模型在 `open_source`/`merge_current` 两种类型化入口中选择，失败时保守回退。路由不执行写入；并入仍复用 Excel 预检、一次性确认和事务执行。 |
 | `timezone_release_contract.py` | 项目自带 IANA 发布清单、版本解析、ZIP/TZif 加载、SHA-256 与区域/探针校验、确定性归档构建、活动发布原子切换和清单恢复 |
 | `timezone_releases/` | 可并存的版本化 TZif ZIP 与 `manifest.json`；当前完整归档 `tzdata 2026.3` / IANA `2026c`，598 区域、8 个跨区域/历史探针 |
 | `scripts/manage_timezone_release.py` | 纯离线 `status/prepare/activate/rollback` 管理入口；候选先暂存验证，同版本不同内容和半更新被拒绝 |

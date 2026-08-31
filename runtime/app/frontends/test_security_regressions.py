@@ -196,6 +196,24 @@ class RuntimeDependencyTests(unittest.TestCase):
         self.assertNotIn("readAsDataURL", html)
         self.assertNotIn("dataUrl: reader.result", html)
 
+    def test_desktop_combines_one_uploaded_file_with_one_database_instruction(self):
+        static_root = Path(__file__).parent / "desktop" / "static"
+        html = (static_root / "db.html").read_text(encoding="utf-8")
+        css = (static_root / "calm-theme.css").read_text(encoding="utf-8")
+        i18n = (static_root / "i18n.js").read_text(encoding="utf-8")
+        self.assertIn('id="composerAttachBtn"', html)
+        self.assertIn('id="composerFileTask"', html)
+        self.assertIn("stageFileTask(file)", html)
+        self.assertIn("executeFileTask(text)", html)
+        self.assertIn("'/db/file-task/route'", html)
+        self.assertIn("route.mode === 'merge_current'", html)
+        self.assertIn("await ask(instruction, { attachment })", html)
+        self.assertIn("composer.addEventListener('drop'", html)
+        self.assertIn("每条任务只能添加一个数据文件", html)
+        self.assertIn(".composer-file-task", css)
+        self.assertIn(".composer.is-file-drag", css)
+        self.assertIn("The model routes the task first", i18n)
+
     def test_desktop_exposes_expandable_audit_trace_memory_and_excel_transfer(self):
         static_root = Path(__file__).parent / "desktop" / "static"
         html = (static_root / "db.html").read_text(encoding="utf-8")
@@ -835,6 +853,10 @@ class AccessControlContractTests(unittest.TestCase):
             "operator",
         )
         self.assertEqual(db_access_control.required_role("DELETE", "/db/memory"), "operator")
+        self.assertEqual(
+            db_access_control.required_role("POST", "/db/file-task/route"),
+            "operator",
+        )
         self.assertEqual(db_access_control.required_role("GET", "/db/excel/export"), "viewer")
         self.assertEqual(
             db_access_control.required_role("POST", "/db/excel/import/prepare"),
@@ -1676,6 +1698,47 @@ class LayeredMemoryStoreTests(unittest.TestCase):
         self.assertEqual(current["counts"]["l3"], 0)
 
 
+class FileTaskRouterTests(unittest.TestCase):
+    def test_model_can_route_explicit_xlsx_merge_to_confirmation_workflow(self):
+        output = {
+            "mode": "merge_current", "confidence": 0.93,
+            "reason": "用户要求追加到当前数据库",
+        }
+        with mock.patch.object(dc, "_llm_ask_json", return_value=output) as classify:
+            route = dc.FileTaskRouter("configured-model").classify(
+                "把这个工作簿的数据追加到当前数据库",
+                file_kind="xlsx", has_current_database=True,
+            )
+        classify.assert_called_once()
+        self.assertEqual(route.mode, "merge_current")
+        self.assertEqual(route.source, "model")
+
+    def test_non_xlsx_file_opens_as_source_without_model_route(self):
+        with mock.patch.object(dc, "_llm_ask_json", side_effect=AssertionError("not needed")):
+            route = dc.FileTaskRouter().classify(
+                "分析后清洗重复行", file_kind="csv", has_current_database=True,
+            )
+        self.assertEqual(route.mode, "open_source")
+        self.assertEqual(route.source, "deterministic")
+
+    def test_xlsx_analysis_opens_without_an_extra_model_round_trip(self):
+        with mock.patch.object(dc, "_llm_ask_json", side_effect=AssertionError("not needed")):
+            route = dc.FileTaskRouter().classify(
+                "分析每张表的数据质量并找出异常值",
+                file_kind="xlsx", has_current_database=True,
+            )
+        self.assertEqual(route.mode, "open_source")
+        self.assertEqual(route.source, "deterministic")
+
+    def test_explicit_merge_has_safe_fallback_when_model_is_unavailable(self):
+        with mock.patch.object(dc, "_llm_ask_json", side_effect=dc.DBQuillError("offline")):
+            route = dc.FileTaskRouter().classify(
+                "把表格并入当前库", file_kind="xlsx", has_current_database=True,
+            )
+        self.assertEqual(route.mode, "merge_current")
+        self.assertEqual(route.source, "safety_fallback")
+
+
 class LocalApiAuthTests(AioHTTPTestCase):
     async def get_application(self):
         app = web.Application(middlewares=[desktop_bridge.cors_middleware])
@@ -1689,6 +1752,9 @@ class LocalApiAuthTests(AioHTTPTestCase):
         )
         app.router.add_get("/db/databases", desktop_bridge.db_databases_handler)
         app.router.add_post("/db/attach", desktop_bridge.db_attach_handler)
+        app.router.add_post(
+            "/db/file-task/route", desktop_bridge.db_file_task_route_handler,
+        )
         app.router.add_delete(
             "/db/databases/{db_id}", desktop_bridge.db_detach_handler,
         )
@@ -1890,12 +1956,48 @@ class LocalApiAuthTests(AioHTTPTestCase):
         self.assertEqual(payload["db"]["kind"], "sqlite")
         self.assertEqual(payload["db"]["name"], "中文数据.sqlite")
         self.assertEqual(payload["db"]["tables"], ["items"])
+        self.assertEqual(payload["taskContext"]["databaseId"], payload["db"]["id"])
+        self.assertEqual(payload["taskContext"]["nextAction"], "ask")
+        self.assertEqual(payload["taskContext"]["writePolicy"], "preview_then_confirm")
         uploaded_path = Path(payload["path"])
         self.assertTrue(uploaded_path.is_file())
         self.assertTrue(uploaded_path.is_relative_to(Path(self.upload_tmp.name)))
         uploaded_id = payload["db"]["id"]
         self.assertIn(uploaded_id, desktop_bridge._DB_AGENT_DBS)
         self.addCleanup(desktop_bridge._DB_AGENT_DBS.pop, uploaded_id, None)
+
+    async def test_file_task_route_uses_model_for_xlsx_merge_without_writing(self):
+        route = dc.FileTaskIntent(
+            mode="merge_current", confidence=0.91,
+            reason="用户明确要求并入当前库", source="model",
+        )
+        with mock.patch.object(dc.FileTaskRouter, "classify", return_value=route) as classify:
+            response = await self.client.post(
+                "/db/file-task/route",
+                headers={"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN},
+                json={
+                    "fileName": "incoming.xlsx",
+                    "instruction": "把它并入当前数据库",
+                    "currentDbId": self.role_db_id,
+                    "llmCfg": "default",
+                },
+            )
+        self.assertEqual(response.status, 200, await response.text())
+        payload = await response.json()
+        self.assertEqual(payload["route"]["mode"], "merge_current")
+        self.assertEqual(payload["route"]["source"], "model")
+        self.assertTrue(payload["route"]["writeRequiresConfirmation"])
+        classify.assert_called_once()
+
+    async def test_file_task_route_rejects_unsupported_attachment(self):
+        response = await self.client.post(
+            "/db/file-task/route",
+            headers={"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN},
+            json={"fileName": "notes.pdf", "instruction": "分析数据"},
+        )
+        self.assertEqual(response.status, 415)
+        payload = await response.json()
+        self.assertFalse(payload["ok"])
 
     async def test_csv_upload_streams_converts_and_attaches_database(self):
         csv_bytes = "id,name\n1,alpha\n2,beta\n".encode("utf-8")
@@ -1922,6 +2024,44 @@ class LocalApiAuthTests(AioHTTPTestCase):
         self.assertEqual(rows, [(1, "alpha"), (2, "beta")])
         uploaded_id = payload["db"]["id"]
         self.assertIn(uploaded_id, desktop_bridge._DB_AGENT_DBS)
+        self.addCleanup(desktop_bridge._DB_AGENT_DBS.pop, uploaded_id, None)
+
+    async def test_xlsx_upload_opens_as_queryable_database_task_source(self):
+        from openpyxl import Workbook
+        source_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(source_dir.cleanup)
+        source_path = Path(source_dir.name) / "orders.xlsx"
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = "orders"
+        worksheet.append(["id", "amount"])
+        worksheet.append([1, 12.5])
+        worksheet.append([2, 8.0])
+        workbook.save(source_path)
+        workbook.close()
+        form = FormData()
+        form.add_field(
+            "file", source_path.read_bytes(), filename="orders.xlsx",
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response = await self.client.post(
+            "/upload?sid=xlsx-file-task",
+            headers={"X-DBQuill-Token": desktop_bridge.BRIDGE_TOKEN},
+            data=form,
+        )
+        self.assertEqual(response.status, 200, await response.text())
+        payload = await response.json()
+        self.assertEqual(payload["db"]["kind"], "excel")
+        self.assertEqual(payload["db"]["tables"], ["orders"])
+        self.assertEqual(payload["taskContext"]["tableCount"], 1)
+        uploaded_id = payload["db"]["id"]
+        with closing(sqlite3.connect(payload["db"]["path"])) as connection:
+            self.assertEqual(
+                connection.execute(
+                    'SELECT "id", "amount" FROM "orders" ORDER BY "id"'
+                ).fetchall(),
+                [(1, 12.5), (2, 8.0)],
+            )
         self.addCleanup(desktop_bridge._DB_AGENT_DBS.pop, uploaded_id, None)
 
     async def test_excel_import_confirmation_and_export_endpoints_round_trip(self):

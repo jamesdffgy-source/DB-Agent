@@ -23,6 +23,7 @@ An open-source, local-first Windows AI database agent for querying, understandin
 DBQuill turns a request into a typed, reviewable database operation before anything reaches the database. Read paths are physically read-only and bounded. Write paths stop at validation and a change preview until the user explicitly confirms them.
 
 - **Ask naturally:** inspect schemas, search rows, calculate grouped metrics, compare periods, and continue with follow-up questions.
+- **Bring a file and a task:** attach SQLite, CSV, or `.xlsx` in the composer and describe the query, analysis, cleanup, or controlled edit in the same message.
 - **See useful results:** follow the public intent/action/observation stages, then inspect tables, charts, evidence, and expandable audit details.
 - **Write deliberately:** use a schema-based form or validate a multi-sheet Excel workbook, preview the change, then confirm one transactional write.
 - **Learn from verified reads:** completed read paths become scoped, redacted execution episodes; repeated successful routes can be promoted into typed read-only strategies, while corrections demote them and users can disable or clear them.
@@ -32,8 +33,8 @@ DBQuill turns a request into a typed, reviewable database operation before anyth
 
 ![DBQuill desktop interface](docs/assets/dbquill-overview.png)
 
-1. Attach a SQLite database, import CSV/`.xlsx`, or add a read-only or controlled-write MySQL/PostgreSQL connection.
-2. Ask a question such as `Which products grew fastest this quarter?`
+1. Attach SQLite, CSV, or `.xlsx` beside a natural-language instruction, or add a read-only or controlled-write MySQL/PostgreSQL connection.
+2. Ask a question such as `Which products grew fastest this quarter?`; the file is attached first and the instruction continues against that data source.
 3. Review the interpreted operation, relationship path, result table, and charts.
 4. For an insert, choose the table and complete the generated form, or merge a workbook whose sheets and headers match existing tables and columns.
 5. Export the current authorized database view as a multi-sheet `.xlsx`; DBQuill exports can be edited and validated for import again.
@@ -69,7 +70,7 @@ Attach `demo_data/dbquill_demo.sqlite`, then follow the [demo guide](docs/DEMO_T
 | Data source | Verified path | Current boundary |
 | --- | --- | --- |
 | SQLite | Schema, retrieval, metrics, charts, semantics, scheduling, and confirmed writes | Complete MVP path |
-| CSV / `.xlsx` | Import into a local SQLite database | Legacy `.xls` is not supported |
+| CSV / `.xlsx` | Attach with a natural-language task and convert into a local SQLite database | Legacy `.xls` is not supported; merging into an existing database uses `.xlsx` preflight and confirmation |
 | MySQL 8.4 | Schema, PK/FK discovery, bounded queries, grouped metrics, timeout and physical read-only enforcement | Controlled `INSERT`/`UPDATE`/`DELETE` is opt-in; live vendor write matrix is pending |
 | PostgreSQL 17 | Schema, PK/FK discovery, bounded queries, grouped metrics, timeout and physical read-only enforcement | Controlled `INSERT`/`UPDATE`/`DELETE` is opt-in; live vendor write matrix is pending |
 

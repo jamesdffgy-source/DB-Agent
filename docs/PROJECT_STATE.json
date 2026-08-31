@@ -1,11 +1,11 @@
 {
   "schema_version": 5,
-  "recorded_at": "2026-08-31T14:24:30+08:00",
-  "source_fingerprint": "b955d49e8dd8cd627b60904085fcc919da3503b2e4bc36413a2d5a1d31498027",
+  "recorded_at": "2026-08-31T15:04:27+08:00",
+  "source_fingerprint": "4130749011179eb4864984b27310a9b8958b5389528a6a5d1482e6680e977ccb",
   "controlled_file_count": 105,
   "python": "3.12.13",
   "test_command": "scripts/check_project.cmd",
-  "tests_passed": 485,
+  "tests_passed": 493,
   "evaluation": {
     "suite_version": "2026.08.17-v23",
     "offline_passed": 134,
@@ -52,5 +52,5 @@
     "credential_findings": 0,
     "redistributed_assets_verified": 2
   },
-  "summary": "新增异步模型记忆反思与本地证据准入，补齐审计、重试和可视化"
+  "summary": "新增上传附件与自然语言数据库任务单入口，补齐低延迟模型路由、写入确认边界和三格式端到端验证"
 }

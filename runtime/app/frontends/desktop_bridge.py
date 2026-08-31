@@ -821,6 +821,7 @@ async def upload_handler(request):
     ext = Path(original_name).suffix.lower()
     # 上传的是 sqlite → 自动 attach 到 /db/*（供 DBQuill 直接对话）；csv → 先转 sqlite 再 attach
     auto_db = None
+    upload_error = ""
     if ext == ".csv":
         try:
             tbl_name = re.sub(r"[^0-9A-Za-z_\u4e00-\u9fff]+", "_", Path(safe_name).stem).strip("_") or "csv_data"
@@ -835,12 +836,12 @@ async def upload_handler(request):
             if _register_database_entry(entry):
                 auto_db = _db_view(db_id)
             else:
-                globals()["_LAST_UPLOAD_ERR"] = "当前凭据未授权接入上传的数据源"
+                upload_error = "当前凭据未授权接入上传的数据源"
         except Exception as exc:
             auto_db = None  # 转换失败则静默跳过，保持原上传行为；错误经 warning 透出
             import traceback as _tb
             _tb.print_exc()
-            globals()["_LAST_UPLOAD_ERR"] = "%s: %s" % (type(exc).__name__, exc)
+            upload_error = "%s: %s" % (type(exc).__name__, exc)
     elif ext == ".xlsx":
         try:
             db_path = str(fpath.with_suffix(".db"))
@@ -854,12 +855,12 @@ async def upload_handler(request):
             if _register_database_entry(entry):
                 auto_db = _db_view(db_id)
             else:
-                globals()["_LAST_UPLOAD_ERR"] = "当前凭据未授权接入上传的数据源"
+                upload_error = "当前凭据未授权接入上传的数据源"
         except Exception as exc:
             auto_db = None  # 转换失败则静默跳过，保持原上传行为；错误经 warning 透出
             import traceback as _tb
             _tb.print_exc()
-            globals()["_LAST_UPLOAD_ERR"] = "%s: %s" % (type(exc).__name__, exc)
+            upload_error = "%s: %s" % (type(exc).__name__, exc)
     elif ext in (".db", ".sqlite", ".sqlite3"):
         try:
             tables = _db_validate_and_summarize(str(fpath))
@@ -872,13 +873,69 @@ async def upload_handler(request):
             if _register_database_entry(entry):
                 auto_db = _db_view(db_id)
             else:
-                globals()["_LAST_UPLOAD_ERR"] = "当前凭据未授权接入上传的数据源"
-        except Exception:
+                upload_error = "当前凭据未授权接入上传的数据源"
+        except Exception as exc:
             auto_db = None  # 非合法 sqlite 则静默跳过，保持原上传行为
+            upload_error = "%s: %s" % (type(exc).__name__, exc)
     resp = {"ok": True, "path": str(fpath), "db": auto_db}
+    if auto_db is not None:
+        tables = list(auto_db.get("tables") or [])
+        resp["taskContext"] = {
+            "databaseId": auto_db["id"],
+            "kind": auto_db.get("kind") or "sqlite",
+            "tableCount": len(tables),
+            "tables": tables,
+            "nextAction": "ask",
+            "writePolicy": "preview_then_confirm",
+        }
     if auto_db is None and ext in (".csv", ".xlsx", ".db", ".sqlite", ".sqlite3"):
-        resp["warning"] = _LAST_UPLOAD_ERR if "_LAST_UPLOAD_ERR" in globals() else "csv conversion failed (no error captured)"
+        resp["warning"] = upload_error or "文件无法转换为可用数据库"
     return json_ok(resp)
+
+
+async def db_file_task_route_handler(request):
+    """Route one pending file + instruction before transferring file bytes.
+
+    This endpoint only selects the entry workflow. Opening a data source uses
+    ``/upload``; merging an XLSX uses the existing preflight + confirmation
+    endpoints. No database write is performed here.
+    """
+    data = await read_json(request)
+    instruction = str(data.get("instruction") or "").strip()[:4000]
+    file_name = Path(str(data.get("fileName") or "")).name[:255]
+    current_db_id = str(data.get("currentDbId") or "").strip()
+    llm_cfg = str(data.get("llmCfg") or "").strip()[:64]
+    extension = Path(file_name).suffix.lower()
+    supported = {".db", ".sqlite", ".sqlite3", ".csv", ".xlsx"}
+    if not instruction or not file_name:
+        return json_ok({"ok": False, "error": "missing fileName or instruction"}, status=400)
+    if extension not in supported:
+        return json_ok({"ok": False, "error": "unsupported database file type"}, status=415)
+    current_entry = _db_entry(current_db_id) if current_db_id else None
+    if current_db_id and current_entry is None:
+        return json_ok({"ok": False, "error": "current database is not available"}, status=404)
+    try:
+        core = _db_agent_core()
+        route = await asyncio.to_thread(
+            core.FileTaskRouter(llm_cfg or _default_model_profile()).classify,
+            instruction,
+            file_kind=extension.lstrip("."),
+            has_current_database=current_entry is not None,
+        )
+        mode = str(route.mode or "open_source")
+        if mode == "merge_current" and (extension != ".xlsx" or current_entry is None):
+            mode = "open_source"
+        return json_ok({
+            "ok": True,
+            "route": {
+                "mode": mode,
+                "source": route.source,
+                "confidence": round(float(route.confidence), 2),
+                "writeRequiresConfirmation": mode == "merge_current",
+            },
+        })
+    except Exception as exc:
+        return json_ok({"ok": False, "error": f"file task routing failed: {exc}"}, status=400)
 
 
 # DBQuill —— /db/* 的 NL-to-Database 入口
@@ -5327,6 +5384,7 @@ def create_app():
     )
     app.router.add_get("/db/databases", db_databases_handler)
     app.router.add_post("/db/attach", db_attach_handler)
+    app.router.add_post("/db/file-task/route", db_file_task_route_handler)
     app.router.add_post("/db/connect", db_connect_handler)
     app.router.add_delete("/db/databases/{db_id}", db_detach_handler)
     app.router.add_post("/db/ask", db_ask_handler)

@@ -6,6 +6,11 @@ All notable user-facing changes are recorded here. Versions follow semantic vers
 
 ### Added
 
+- Added task-coupled file attachments in the conversation composer. A user can
+  send one SQLite, CSV, or `.xlsx` file with one natural-language database task;
+  the configured model routes an ambiguous XLSX between opening a new source and
+  preparing a merge into the current database. Merge routes still stop at the
+  existing transactional preflight and explicit confirmation boundary.
 - Added an observable execution timeline that shows public intent, action,
   observation, synthesis, and completion stages without exposing model
   chain-of-thought. Completed timelines persist in the conversation snapshot.

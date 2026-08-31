@@ -2170,6 +2170,15 @@ class IntentResult:
     source: str = "unspecified" # model | deterministic | safety_guard | safety_fallback
 
 
+@dataclass(frozen=True)
+class FileTaskIntent:
+    """Route for one uploaded data file before it becomes a database source."""
+    mode: str                   # open_source | merge_current
+    confidence: float = 0.0
+    reason: str = ""
+    source: str = "unspecified"  # model | deterministic | safety_fallback
+
+
 @dataclass
 class DatabaseOperationPlan:
     """自然语言映射出的数据库操作协议，供项目自研规划器与执行器共同使用。"""
@@ -17674,6 +17683,103 @@ class BasicConversationRouter:
 # ---------------------------------------------------------------------------
 # IntentRouter —— LLM 判断数据库意图 + 置信度
 # ---------------------------------------------------------------------------
+
+class FileTaskRouter:
+    """Let the configured model choose the safe entry route for an uploaded file.
+
+    The router only chooses between opening a file as an isolated data source
+    and preparing an XLSX merge into the current database. It never writes to
+    the target database: ``merge_current`` still goes through the existing
+    workbook preflight and one-time confirmation boundary.
+    """
+
+    _PROMPT = (
+        "你是数据库产品的文件任务路由器。根据用户指令，只输出一个 JSON 对象：\n"
+        "{{\"mode\": \"open_source\" | \"merge_current\", "
+        "\"confidence\": 0.0, \"reason\": \"一句简短的路由说明\"}}\n\n"
+        "路由定义：\n"
+        "- open_source：把附件作为一个独立数据源打开，然后执行查询、分析、清洗、修改、"
+        "结构检查等自然语言数据库任务；指令含糊时也选择它。\n"
+        "- merge_current：只用于用户明确要求把 XLSX 的工作表数据导入、追加或并入当前已选择数据库。"
+        "该路由只会生成预检和确认单，不会直接写入。\n\n"
+        "约束：文件不是 XLSX、没有当前数据库、只是分析附件、或只是修改附件本身时，"
+        "必须选择 open_source。不要根据文件名猜测用户意图。\n\n"
+        "文件类型：{file_kind}\n"
+        "已有当前数据库：{has_current_database}\n"
+        "用户指令：{instruction}\n\n"
+        "输出 JSON："
+    )
+    _MERGE_FALLBACK_RE = re.compile(
+        r"(?:并入|合并(?:到|进)?|导入(?:到)?|追加(?:到)?|写入(?:到)?|灌入|同步(?:到)?).{0,24}"
+        r"(?:当前|现有|已有|这个)?(?:数据库|库)|"
+        r"(?:merge|import|append).{0,24}(?:current|existing).{0,12}(?:database|db)",
+        re.IGNORECASE,
+    )
+    _MERGE_SIGNAL_RE = re.compile(
+        r"(?:并入|合并|导入|追加|写入|灌入|同步)|"
+        r"\b(?:merge|import|append|load\s+into)\b",
+        re.IGNORECASE,
+    )
+
+    def __init__(self, llm_cfg: str = "default"):
+        self.llm_cfg = str(llm_cfg or "").strip() or "default"
+
+    def classify(
+        self,
+        instruction: str,
+        *,
+        file_kind: str,
+        has_current_database: bool,
+    ) -> FileTaskIntent:
+        text = re.sub(r"\s+", " ", str(instruction or "")).strip()[:4000]
+        kind = str(file_kind or "").strip().lower().lstrip(".")
+        can_merge = kind == "xlsx" and bool(has_current_database)
+        if not can_merge:
+            return FileTaskIntent(
+                mode="open_source",
+                confidence=1.0,
+                reason="该文件任务只能先作为独立数据源打开",
+                source="deterministic",
+            )
+        if not self._MERGE_SIGNAL_RE.search(text):
+            return FileTaskIntent(
+                mode="open_source",
+                confidence=0.98,
+                reason="指令没有把附件并入当前数据库的信号，直接打开为独立数据源",
+                source="deterministic",
+            )
+
+        prompt = self._PROMPT.format(
+            file_kind=kind,
+            has_current_database="是" if has_current_database else "否",
+            instruction=text,
+        )
+        try:
+            obj = _llm_ask_json(prompt, self.llm_cfg)
+            mode = str(obj.get("mode") or "").strip().lower()
+            if mode not in {"open_source", "merge_current"}:
+                raise DBQuillError(f"文件任务路由非法: {mode!r}")
+            confidence = max(0.0, min(1.0, float(obj.get("confidence") or 0.0)))
+            reason = re.sub(r"\s+", " ", str(obj.get("reason") or "")).strip()[:160]
+            return FileTaskIntent(
+                mode=mode,
+                confidence=confidence,
+                reason=reason or "模型已选择文件任务入口",
+                source="model",
+            )
+        except (DBQuillError, ValueError, TypeError):
+            merge = bool(self._MERGE_FALLBACK_RE.search(text))
+            return FileTaskIntent(
+                mode="merge_current" if merge else "open_source",
+                confidence=0.6 if merge else 0.4,
+                reason=(
+                    "模型路由不可用；明确并入指令由安全兜底送往预检"
+                    if merge else
+                    "模型路由不可用；按非写入默认作为独立数据源打开"
+                ),
+                source="safety_fallback",
+            )
+
 
 class IntentRouter:
     """判断问题意图：query(要算) / retrieve(要描述) / compose(组合推理) / write(写库)。"""
