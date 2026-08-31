@@ -93,7 +93,7 @@ _DETAIL_KEYS = frozenset({
     "column_scope_table_count", "column_scope_column_count",
     "row_scope_table_count", "row_scope_filter_count",
     "pending_sequence", "disposition", "evidence_sha256",
-    "memory_ref", "memory_layer", "memory_status",
+    "memory_ref", "memory_layer", "memory_status", "reflection_stage",
 })
 _INTEGER_KEYS = frozenset({
     "question_length", "result_rows", "dataset_count", "affected_rows",

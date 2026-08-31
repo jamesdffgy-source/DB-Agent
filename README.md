@@ -123,7 +123,7 @@ Public benchmarks are diagnostic evidence, not templates for hard-coded SQL. The
 - Remote writes require an explicit controlled-write connection; only DML is enabled, while remote DDL remains blocked.
 - Scheduled natural-language work cannot approve writes automatically.
 - Audit records retain controlled metadata and hashes, not raw prompts, SQL, credentials, or result rows.
-- Layered memory stores redacted question previews and typed route metadata only; it is isolated by database, access scope, and schema fingerprint, and never stores SQL or result rows.
+- Layered memory stages completed reads for asynchronous model reflection. The model may propose discard, L4, L2, L3, or L2+L3, but a deterministic local evidence gate controls the effective write. Memories remain isolated by database, access scope, and schema fingerprint, and never store SQL, result rows, credentials, connection details, or model prompts.
 - Model credentials are stored in ignored local configuration and are never required in repository files.
 
 Report sensitive issues privately as described in [SECURITY.md](SECURITY.md). Use [SUPPORT.md](SUPPORT.md) for ordinary setup questions and bug reports.

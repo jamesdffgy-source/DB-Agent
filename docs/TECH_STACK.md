@@ -43,6 +43,7 @@
 | `model_gateway.py` | 项目专用 OpenAI-compatible `chat/completions` / `responses` 文本传输；支持流式/非流式解析、可重试状态、连接/读取/总截止时间、协作取消、代理/TLS 配置和线程级 token 统计。不提供工具注册、自治循环、通用会话或提供商故障转移编排。 |
 | `upload_storage.py` | 上传文件名清洗、会话桶哈希、随机落盘名、分块上传临时路径、完成后的原子发布和有界保留清理；bridge 只通过该边界写入上传目录。桌面使用 multipart 流式发送，不在渲染进程构造 Base64/JSON 全量副本。 |
 | `db_sessions_store.py` | SQLite 会话、待澄清状态和数据库+表/字段范围指纹持久化；`messages.display_payload` 保存最大 768 KiB 的 UI-only 只读结果快照，`get_history` 永远只返回紧凑 role/content，`get_session` 才恢复富结果。旧消息表在线新增该列，旧会话迁移为 `all`，表级 v1 指纹保持兼容，显式事务关闭连接 |
+| `db_memory_store.py` | schema v2 的 L0–L4 执行记忆；已完成读取先写入待反思事件，`MemoryReflector` 只接收脱敏问题预览、目标表/动作和计数等安全元数据，异步提议舍弃/L4/L2/L3/L2+L3。本地门禁依据执行成败、纠错、置信度与可复用性决定有效层；L0 不可写，L1 只由程序生成。待判断/失败/舍弃事件不进入召回，旧 schema v1 记录保守标为 `legacy`。不保存 SQL、结果行、凭据、连接信息或模型提示词 |
 | `db_semantic_store.py` | 独立 SQLite 语义目录；按稳定数据源标识保存八类定义，普通指标过滤、比率公式、业务日历、维度层级/固定过滤和时间默认粒度以分类型结构化 JSON 持久化；兼容旧维度层级载荷，并提供内容版本快照和单事务批量合并 |
 | `db_audit_store.py` | 独立 SQLite 追加式操作审计账本；受控详情字段白名单（建表只新增字段数量，不记字段名/默认值原文）、不可逆指纹、连续序号与 SHA-256 前向哈希链、查询/校验/脱敏导出、批准/终态未决对账、追加式管理员处置、30–3650 天非破坏性保留评估、原子外部前缀归档、绑定文件 SHA-256/head hash 的本地/外部备份与离线恢复、配置式文件系统目标/能力探测/同步状态/最新包复验、本地/外部隔离演练、DB/WAL/SHM 现场评估、严格损坏证据包和带原现场自动回滚的异常恢复，以及可移出的历史前缀锚点；不提供历史更新/删除 API |
 | `db_access_control.py` | `local-rbac-v1` 角色 token HMAC 派生、固定时间匹配、viewer/operator/admin 能力矩阵与 HTTP 最小角色策略 |
@@ -137,7 +138,7 @@
 
 - 测试框架：标准库 `unittest` + `aiohttp.test_utils`。
 - 基线文件：`runtime/app/frontends/test_security_regressions.py`。
-- 当前基线：413 项测试；最新新增分组多指标本地计划、原始 SQL 多语句、协作取消、
+- 当前基线：485 项测试；最新新增异步模型记忆反思、本地证据准入、v1 `legacy` 迁移、审计与重试；此前的分组多指标本地计划、原始 SQL 多语句、协作取消、
   远程 DECIMAL/日期类型与 MySQL/PostgreSQL PK/FK/行数发现回归；此前会话富快照、SQLite/CSV 正常上传 API 回归覆盖只读结果切换
   会话后恢复、模型上下文与 UI 快照分离、旧 messages 表迁移、Base64 解码、会话目录落盘、
   SQLite 校验/接入、CSV 转库和数据读回，`.xls` 解码前拒绝继续保留；此前 5 项基础沟通边界回归覆盖无模型本地回答、数据库操作不被

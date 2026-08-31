@@ -31,9 +31,12 @@ _DATA_DIR = Path(__file__).resolve().parent / "data"
 _DB_PATH = _DATA_DIR / "db_memory.db"
 _LOCK = threading.RLock()
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 PROMOTION_SUPPORT = 3
 MAX_EPISODES_PER_SCOPE = 500
+MIN_FACT_CONFIDENCE = 0.55
+MIN_STRATEGY_CONFIDENCE = 0.60
+MIN_STRATEGY_REUSABILITY = 0.65
 _READ_INTENTS = frozenset({"query", "retrieve", "compose"})
 _SAFE_ACTIONS = frozenset({
     "inspect_schema", "search_schema", "search_values", "sample_rows",
@@ -132,7 +135,7 @@ def question_tokens(value: Any, limit: int = 36) -> list[str]:
 
 def policy_view() -> dict:
     return {
-        "version": "dbquill-memory-policy-v1",
+        "version": "dbquill-memory-policy-v2",
         "label": "L0 · 记忆宪章",
         "immutable": True,
         "rules": [
@@ -140,6 +143,7 @@ def policy_view() -> dict:
             "记忆严格绑定数据库、授权范围和结构版本",
             "不保存 SQL、结果行、连接信息、凭据或模型提示词",
             "策略只能描述白名单只读动作，不能包含可执行代码",
+            "模型只能提出是否记忆及目标层，最终写入由本地证据门禁决定",
             "纠错会降权；首次或每次纠错后均需三次成功证据才能晋级",
         ],
     }
@@ -150,6 +154,16 @@ def _connect() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
+
+
+def _ensure_column(
+    conn: sqlite3.Connection, table: str, column: str, declaration: str,
+) -> None:
+    existing = {
+        str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
 
 def init_db() -> None:
@@ -176,6 +190,17 @@ def init_db() -> None:
                 result_count INTEGER NOT NULL DEFAULT 0,
                 evidence_count INTEGER NOT NULL DEFAULT 0,
                 corrected INTEGER NOT NULL DEFAULT 0,
+                reflection_status TEXT NOT NULL DEFAULT 'legacy',
+                reflection_source TEXT NOT NULL DEFAULT 'legacy',
+                reflection_decision TEXT NOT NULL DEFAULT 'legacy',
+                reflection_requested_layers_json TEXT NOT NULL DEFAULT '[]',
+                reflection_layers_json TEXT NOT NULL DEFAULT '[]',
+                reflection_gate_notes_json TEXT NOT NULL DEFAULT '[]',
+                reflection_reason TEXT NOT NULL DEFAULT '',
+                reflection_novelty REAL NOT NULL DEFAULT 0,
+                reflection_reusability REAL NOT NULL DEFAULT 0,
+                reflection_confidence REAL NOT NULL DEFAULT 0,
+                reflected_at TEXT,
                 fact_id TEXT,
                 strategy_id TEXT,
                 evidence_fingerprint TEXT NOT NULL UNIQUE,
@@ -242,6 +267,20 @@ def init_db() -> None:
                 ON memory_index(database_ref, access_scope_ref, schema_fingerprint, token, layer);
             """
         )
+        for column, declaration in (
+            ("reflection_status", "TEXT NOT NULL DEFAULT 'legacy'"),
+            ("reflection_source", "TEXT NOT NULL DEFAULT 'legacy'"),
+            ("reflection_decision", "TEXT NOT NULL DEFAULT 'legacy'"),
+            ("reflection_requested_layers_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("reflection_layers_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("reflection_gate_notes_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("reflection_reason", "TEXT NOT NULL DEFAULT ''"),
+            ("reflection_novelty", "REAL NOT NULL DEFAULT 0"),
+            ("reflection_reusability", "REAL NOT NULL DEFAULT 0"),
+            ("reflection_confidence", "REAL NOT NULL DEFAULT 0"),
+            ("reflected_at", "TEXT"),
+        ):
+            _ensure_column(conn, "memory_episodes", column, declaration)
         conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         conn.commit()
 
@@ -369,80 +408,94 @@ def _upsert_route_memory(
     tokens: list[str],
     tables: list[str],
     actions: list[str],
-) -> tuple[str, str, str]:
+    include_fact: bool,
+    include_strategy: bool,
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
     signature = _route_signature(intent, tokens, tables, actions)
     now = _now()
-    fact_row = conn.execute(
-        """SELECT id, trigger_tokens_json FROM memory_facts WHERE database_ref=? AND access_scope_ref=?
-           AND schema_fingerprint=? AND signature=?""",
-        (database_ref, access_scope_ref, schema_ref, signature),
-    ).fetchone()
-    fact_id = str(fact_row["id"]) if fact_row else uuid.uuid4().hex
-    if fact_row:
-        fact_tokens = list(dict.fromkeys([
-            *_load_json(fact_row["trigger_tokens_json"], []), *tokens,
-        ]))[:36]
-        conn.execute(
-            """UPDATE memory_facts SET support_count=support_count+1,
-               trigger_tokens_json=?, updated_at=? WHERE id=?""",
-            (_json(fact_tokens), now, fact_id),
-        )
-    else:
-        conn.execute(
-            """INSERT INTO memory_facts(
-                   id, database_ref, access_scope_ref, schema_fingerprint, signature,
-                   trigger_tokens_json, target_tables_json, action_sequence_json,
-                   support_count, correction_count, status, created_at, updated_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 'active', ?, ?)""",
-            (
-                fact_id, database_ref, access_scope_ref, schema_ref, signature,
-                _json(tokens[:24]), _json(tables), _json(actions), now, now,
-            ),
+    fact_id: Optional[str] = None
+    if include_fact:
+        fact_row = conn.execute(
+            """SELECT id, trigger_tokens_json FROM memory_facts
+               WHERE database_ref=? AND access_scope_ref=?
+               AND schema_fingerprint=? AND signature=?""",
+            (database_ref, access_scope_ref, schema_ref, signature),
+        ).fetchone()
+        fact_id = str(fact_row["id"]) if fact_row else uuid.uuid4().hex
+        if fact_row:
+            fact_tokens = list(dict.fromkeys([
+                *_load_json(fact_row["trigger_tokens_json"], []), *tokens,
+            ]))[:36]
+            conn.execute(
+                """UPDATE memory_facts SET support_count=support_count+1,
+                   trigger_tokens_json=?, updated_at=? WHERE id=?""",
+                (_json(fact_tokens), now, fact_id),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO memory_facts(
+                       id, database_ref, access_scope_ref, schema_fingerprint, signature,
+                       trigger_tokens_json, target_tables_json, action_sequence_json,
+                       support_count, correction_count, status, created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 'active', ?, ?)""",
+                (
+                    fact_id, database_ref, access_scope_ref, schema_ref, signature,
+                    _json(tokens[:24]), _json(tables), _json(actions), now, now,
+                ),
+            )
+        _index_targets(
+            conn, database_ref, access_scope_ref, schema_ref,
+            tokens, "l2", fact_id, 1.3,
         )
 
-    strategy_row = conn.execute(
-        """SELECT id, trigger_tokens_json, support_count, correction_count, status FROM memory_strategies
-           WHERE database_ref=? AND access_scope_ref=? AND schema_fingerprint=? AND signature=?""",
-        (database_ref, access_scope_ref, schema_ref, signature),
-    ).fetchone()
-    strategy_id = str(strategy_row["id"]) if strategy_row else uuid.uuid4().hex
-    if strategy_row:
-        strategy_tokens = list(dict.fromkeys([
-            *_load_json(strategy_row["trigger_tokens_json"], []), *tokens,
-        ]))[:36]
-        support = int(strategy_row["support_count"]) + 1
-        corrections = int(strategy_row["correction_count"])
-        previous_status = str(strategy_row["status"])
-        status = previous_status
-        promoted_at = None
-        if previous_status != "disabled":
-            status = (
-                "promoted"
-                if support >= PROMOTION_SUPPORT * (corrections + 1)
-                else "candidate"
+    strategy_id: Optional[str] = None
+    status: Optional[str] = None
+    if include_strategy:
+        strategy_row = conn.execute(
+            """SELECT id, trigger_tokens_json, support_count, correction_count, status
+               FROM memory_strategies WHERE database_ref=? AND access_scope_ref=?
+               AND schema_fingerprint=? AND signature=?""",
+            (database_ref, access_scope_ref, schema_ref, signature),
+        ).fetchone()
+        strategy_id = str(strategy_row["id"]) if strategy_row else uuid.uuid4().hex
+        if strategy_row:
+            strategy_tokens = list(dict.fromkeys([
+                *_load_json(strategy_row["trigger_tokens_json"], []), *tokens,
+            ]))[:36]
+            support = int(strategy_row["support_count"]) + 1
+            corrections = int(strategy_row["correction_count"])
+            previous_status = str(strategy_row["status"])
+            status = previous_status
+            promoted_at = None
+            if previous_status != "disabled":
+                status = (
+                    "promoted"
+                    if support >= PROMOTION_SUPPORT * (corrections + 1)
+                    else "candidate"
+                )
+                promoted_at = now if status == "promoted" else None
+            conn.execute(
+                """UPDATE memory_strategies SET support_count=?, trigger_tokens_json=?,
+                       status=?, promoted_at=COALESCE(?, promoted_at), updated_at=? WHERE id=?""",
+                (support, _json(strategy_tokens), status, promoted_at, now, strategy_id),
             )
-            promoted_at = now if status == "promoted" else None
-        conn.execute(
-            """UPDATE memory_strategies SET support_count=?, trigger_tokens_json=?,
-                   status=?, promoted_at=COALESCE(?, promoted_at), updated_at=? WHERE id=?""",
-            (support, _json(strategy_tokens), status, promoted_at, now, strategy_id),
+        else:
+            status = "candidate"
+            conn.execute(
+                """INSERT INTO memory_strategies(
+                       id, database_ref, access_scope_ref, schema_fingerprint, signature,
+                       trigger_tokens_json, intent, target_tables_json, action_sequence_json,
+                       support_count, correction_count, status, created_at, updated_at, promoted_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 'candidate', ?, ?, NULL)""",
+                (
+                    strategy_id, database_ref, access_scope_ref, schema_ref, signature,
+                    _json(tokens[:24]), intent, _json(tables), _json(actions), now, now,
+                ),
+            )
+        _index_targets(
+            conn, database_ref, access_scope_ref, schema_ref,
+            tokens, "l3", strategy_id, 1.6,
         )
-    else:
-        support = 1
-        status = "candidate"
-        conn.execute(
-            """INSERT INTO memory_strategies(
-                   id, database_ref, access_scope_ref, schema_fingerprint, signature,
-                   trigger_tokens_json, intent, target_tables_json, action_sequence_json,
-                   support_count, correction_count, status, created_at, updated_at, promoted_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 'candidate', ?, ?, NULL)""",
-            (
-                strategy_id, database_ref, access_scope_ref, schema_ref, signature,
-                _json(tokens[:24]), intent, _json(tables), _json(actions), now, now,
-            ),
-        )
-    _index_targets(conn, database_ref, access_scope_ref, schema_ref, tokens, "l2", fact_id, 1.3)
-    _index_targets(conn, database_ref, access_scope_ref, schema_ref, tokens, "l3", strategy_id, 1.6)
     return fact_id, strategy_id, status
 
 
@@ -456,7 +509,7 @@ def record_episode(
     question: str,
     answer: Any,
 ) -> dict:
-    """Archive one bounded execution and crystallize only successful reads."""
+    """Stage one bounded read episode for asynchronous model reflection."""
     operation = answer.get("operation") if isinstance(answer, dict) else getattr(answer, "operation", None)
     operation = operation if isinstance(operation, dict) else {}
     intent = str(operation.get("intent") or "").strip().lower()
@@ -491,28 +544,18 @@ def record_episode(
 
     with _LOCK, closing(_connect()) as conn:
         existing = conn.execute(
-            "SELECT id FROM memory_episodes WHERE evidence_fingerprint=?", (fingerprint,),
+            """SELECT id, reflection_status FROM memory_episodes
+               WHERE evidence_fingerprint=?""", (fingerprint,),
         ).fetchone()
         if existing:
-            return {"stored": False, "reason": "duplicate", "episodeId": existing["id"]}
+            return {
+                "stored": False, "reason": "duplicate", "episodeId": existing["id"],
+                "reflectionStatus": existing["reflection_status"],
+            }
         corrected_episode_id = None
         if corrected_previous:
             corrected_episode_id = _mark_previous_correction(
                 conn, database_ref, access_scope_ref, schema_ref, sess_ref,
-            )
-        fact_id = None
-        strategy_id = None
-        strategy_status = None
-        if succeeded:
-            fact_id, strategy_id, strategy_status = _upsert_route_memory(
-                conn,
-                database_ref=database_ref,
-                access_scope_ref=access_scope_ref,
-                schema_ref=schema_ref,
-                intent=intent,
-                tokens=tokens,
-                tables=tables,
-                actions=actions,
             )
         episode_id = uuid.uuid4().hex
         conn.execute(
@@ -521,18 +564,23 @@ def record_episode(
                    session_ref, run_ref, question_sha256, question_preview,
                    tokens_json, intent, action, target_tables_json,
                    action_sequence_json, outcome, result_count, evidence_count,
-                   corrected, fact_id, strategy_id, evidence_fingerprint,
+                   corrected, reflection_status, reflection_source,
+                   reflection_decision, reflection_requested_layers_json,
+                   reflection_layers_json, reflection_gate_notes_json, reflection_reason,
+                   reflection_novelty, reflection_reusability, reflection_confidence,
+                   reflected_at, fact_id, strategy_id, evidence_fingerprint,
                    created_at, updated_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)""",
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                         0, 'pending', 'model', 'pending', '[]', '[]', '[]', '', 0, 0, 0,
+                         NULL, NULL, NULL, ?, ?, ?)""",
             (
                 episode_id, database_ref, access_scope_ref, schema_ref, sess_ref,
                 execution_ref, question_sha, redact_preview(question), _json(tokens),
                 intent, str(operation.get("action") or actions[-1])[:32], _json(tables),
-                _json(actions), outcome, result_count, evidence_count, fact_id,
-                strategy_id, fingerprint, now, now,
+                _json(actions), outcome, result_count, evidence_count,
+                fingerprint, now, now,
             ),
         )
-        _index_targets(conn, database_ref, access_scope_ref, schema_ref, tokens, "l4", episode_id, 1.0)
         stale_rows = conn.execute(
             """SELECT id, fact_id, strategy_id, outcome, corrected
                FROM memory_episodes WHERE database_ref=? AND access_scope_ref=?
@@ -545,6 +593,279 @@ def record_episode(
         "stored": True,
         "episodeId": episode_id,
         "correctedEpisodeId": corrected_episode_id,
+        "reflectionStatus": "pending",
+    }
+
+
+def _bounded_score(value: Any) -> float:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return round(max(0.0, min(1.0, score)), 3)
+
+
+def reflection_payload(
+    episode_id: str,
+    *,
+    database_ref: str,
+    access_scope_ref: str,
+    schema_ref: str,
+) -> dict:
+    """Return the only metadata the reflection model may inspect."""
+    with closing(_connect()) as conn:
+        row = conn.execute(
+            """SELECT * FROM memory_episodes WHERE id=? AND database_ref=?
+               AND access_scope_ref=? AND schema_fingerprint=?""",
+            (episode_id, database_ref, access_scope_ref, schema_ref),
+        ).fetchone()
+        if row is None:
+            raise ValueError("memory episode not found")
+        tables = _load_json(row["target_tables_json"], [])
+        actions = _load_json(row["action_sequence_json"], [])
+        signature = _route_signature(str(row["intent"]), [], tables, actions)
+        fact = conn.execute(
+            """SELECT support_count, correction_count FROM memory_facts
+               WHERE database_ref=? AND access_scope_ref=? AND schema_fingerprint=?
+               AND signature=?""",
+            (database_ref, access_scope_ref, schema_ref, signature),
+        ).fetchone()
+        strategy = conn.execute(
+            """SELECT support_count, correction_count, status FROM memory_strategies
+               WHERE database_ref=? AND access_scope_ref=? AND schema_fingerprint=?
+               AND signature=?""",
+            (database_ref, access_scope_ref, schema_ref, signature),
+        ).fetchone()
+    return {
+        "episode_id": str(row["id"]),
+        "reflection_status": str(row["reflection_status"]),
+        "question_preview": str(row["question_preview"]),
+        "intent": str(row["intent"]),
+        "outcome": str(row["outcome"]),
+        "target_tables": tables[:12],
+        "read_actions": actions[:12],
+        "result_count": int(row["result_count"]),
+        "evidence_count": int(row["evidence_count"]),
+        "corrected": bool(row["corrected"]),
+        "prior_route": {
+            "fact_support": int(fact["support_count"]) if fact else 0,
+            "fact_corrections": int(fact["correction_count"]) if fact else 0,
+            "strategy_support": int(strategy["support_count"]) if strategy else 0,
+            "strategy_corrections": int(strategy["correction_count"]) if strategy else 0,
+            "strategy_status": str(strategy["status"]) if strategy else "none",
+        },
+    }
+
+
+def prepare_reflection_retry(
+    episode_id: str,
+    *,
+    database_ref: str,
+    access_scope_ref: str,
+    schema_ref: str,
+) -> dict:
+    with _LOCK, closing(_connect()) as conn:
+        row = conn.execute(
+            """SELECT reflection_status FROM memory_episodes WHERE id=?
+               AND database_ref=? AND access_scope_ref=? AND schema_fingerprint=?""",
+            (episode_id, database_ref, access_scope_ref, schema_ref),
+        ).fetchone()
+        if row is None:
+            raise ValueError("memory episode not found")
+        status = str(row["reflection_status"])
+        if status != "failed":
+            raise ValueError("only failed memory reflection can be retried")
+        conn.execute(
+            """UPDATE memory_episodes SET reflection_status='pending',
+               reflection_source='model', reflection_decision='pending',
+               reflection_reason='', reflection_gate_notes_json='[]',
+               reflected_at=NULL, updated_at=? WHERE id=?""",
+            (_now(), episode_id),
+        )
+        conn.commit()
+    return {"episodeId": episode_id, "reflectionStatus": "pending"}
+
+
+def mark_reflection_failed(
+    episode_id: str,
+    *,
+    database_ref: str,
+    access_scope_ref: str,
+    schema_ref: str,
+    reason: str,
+) -> bool:
+    with _LOCK, closing(_connect()) as conn:
+        cursor = conn.execute(
+            """UPDATE memory_episodes SET reflection_status='failed',
+               reflection_source='model', reflection_decision='error',
+               reflection_reason=?, reflected_at=?, updated_at=?
+               WHERE id=? AND database_ref=? AND access_scope_ref=?
+               AND schema_fingerprint=? AND reflection_status='pending'""",
+            (
+                redact_preview(reason, limit=240), _now(), _now(), episode_id,
+                database_ref, access_scope_ref, schema_ref,
+            ),
+        )
+        conn.commit()
+        return int(cursor.rowcount) == 1
+
+
+def apply_reflection(
+    episode_id: str,
+    decision: dict,
+    *,
+    database_ref: str,
+    access_scope_ref: str,
+    schema_ref: str,
+) -> dict:
+    """Apply a model proposal only after deterministic local admission checks."""
+    if not isinstance(decision, dict):
+        raise ValueError("reflection decision must be an object")
+    raw_decision = str(
+        decision.get("decision") or decision.get("memory_decision") or ""
+    ).strip().lower()
+    worth = decision.get("worth_remembering")
+    if not isinstance(worth, bool):
+        worth = raw_decision not in {"discard", "reject"}
+    raw_layers = decision.get("target_layers")
+    if not isinstance(raw_layers, list):
+        raw_layers = {
+            "l4": ["l4"], "l2": ["l2"], "l3": ["l3"],
+            "l2_l3": ["l2", "l3"], "fact_strategy": ["l2", "l3"],
+        }.get(raw_decision, [])
+    requested: list[str] = []
+    unsupported: list[str] = []
+    for value in raw_layers[:8]:
+        layer = str(value or "").strip().lower()
+        if layer in {"l2", "l3", "l4"} and layer not in requested:
+            requested.append(layer)
+        elif layer and layer not in unsupported:
+            unsupported.append(layer[:24])
+    if not worth:
+        requested = []
+        raw_decision = "discard"
+    elif not requested:
+        raise ValueError("reflection proposal did not select an allowed memory layer")
+    novelty = _bounded_score(decision.get("novelty"))
+    reusability = _bounded_score(decision.get("reusability"))
+    confidence = _bounded_score(decision.get("confidence"))
+    reason = redact_preview(
+        decision.get("reasoning") or decision.get("reason") or "", limit=280,
+    )
+    now = _now()
+
+    with _LOCK, closing(_connect()) as conn:
+        row = conn.execute(
+            """SELECT * FROM memory_episodes WHERE id=? AND database_ref=?
+               AND access_scope_ref=? AND schema_fingerprint=?""",
+            (episode_id, database_ref, access_scope_ref, schema_ref),
+        ).fetchone()
+        if row is None:
+            raise ValueError("memory episode not found")
+        if str(row["reflection_status"]) != "pending":
+            return {
+                "applied": False, "reason": "already_final",
+                "reflectionStatus": str(row["reflection_status"]),
+            }
+
+        gate_notes = [f"不支持的层 {item} 已拒绝" for item in unsupported]
+        if not worth:
+            conn.execute(
+                """DELETE FROM memory_index WHERE layer='l4' AND target_id=?""",
+                (episode_id,),
+            )
+            conn.execute(
+                """UPDATE memory_episodes SET question_preview='[discarded after reflection]',
+                   tokens_json='[]', reflection_status='discarded',
+                   reflection_source='model', reflection_decision='discard',
+                   reflection_requested_layers_json='[]', reflection_layers_json='[]',
+                   reflection_gate_notes_json=?, reflection_reason=?,
+                   reflection_novelty=?, reflection_reusability=?,
+                   reflection_confidence=?, reflected_at=?, updated_at=? WHERE id=?""",
+                (
+                    _json(gate_notes), reason, novelty, reusability,
+                    confidence, now, now, episode_id,
+                ),
+            )
+            conn.commit()
+            return {
+                "applied": True, "reflectionStatus": "discarded",
+                "decision": "discard", "requestedLayers": [],
+                "effectiveLayers": [], "gateNotes": gate_notes,
+            }
+
+        effective = ["l4"]
+        upper_allowed = str(row["outcome"]) == "succeeded" and not bool(row["corrected"])
+        if not upper_allowed and any(layer in requested for layer in ("l2", "l3")):
+            gate_notes.append(
+                "失败或已被纠错的执行片段只能保留在 L4"
+            )
+        include_fact = False
+        if "l2" in requested and upper_allowed:
+            if confidence >= MIN_FACT_CONFIDENCE:
+                include_fact = True
+                effective.append("l2")
+            else:
+                gate_notes.append("L2 提议因模型置信度不足被拒绝")
+        include_strategy = False
+        if "l3" in requested and upper_allowed:
+            if (
+                confidence >= MIN_STRATEGY_CONFIDENCE
+                and reusability >= MIN_STRATEGY_REUSABILITY
+            ):
+                include_strategy = True
+                effective.append("l3")
+            else:
+                gate_notes.append("L3 提议因置信度或可复用性不足被拒绝")
+
+        tokens = _load_json(row["tokens_json"], [])
+        tables = _load_json(row["target_tables_json"], [])
+        actions = _load_json(row["action_sequence_json"], [])
+        fact_id = None
+        strategy_id = None
+        strategy_status = None
+        if include_fact or include_strategy:
+            fact_id, strategy_id, strategy_status = _upsert_route_memory(
+                conn,
+                database_ref=database_ref,
+                access_scope_ref=access_scope_ref,
+                schema_ref=schema_ref,
+                intent=str(row["intent"]),
+                tokens=tokens,
+                tables=tables,
+                actions=actions,
+                include_fact=include_fact,
+                include_strategy=include_strategy,
+            )
+        _index_targets(
+            conn, database_ref, access_scope_ref, schema_ref,
+            tokens, "l4", episode_id, 1.0,
+        )
+        status = "admitted" if len(effective) > 1 else "l4_only"
+        if gate_notes and any(layer in requested for layer in ("l2", "l3")):
+            status = "partial" if len(effective) > 1 else "l4_only"
+        conn.execute(
+            """UPDATE memory_episodes SET reflection_status=?,
+               reflection_source='model', reflection_decision=?,
+               reflection_requested_layers_json=?, reflection_layers_json=?,
+               reflection_gate_notes_json=?, reflection_reason=?,
+               reflection_novelty=?, reflection_reusability=?,
+               reflection_confidence=?, reflected_at=?, fact_id=?, strategy_id=?,
+               updated_at=? WHERE id=?""",
+            (
+                status, raw_decision or "remember", _json(requested), _json(effective),
+                _json(gate_notes), reason, novelty, reusability, confidence,
+                now, fact_id, strategy_id, now, episode_id,
+            ),
+        )
+        conn.commit()
+    return {
+        "applied": True,
+        "reflectionStatus": status,
+        "decision": raw_decision or "remember",
+        "requestedLayers": requested,
+        "effectiveLayers": effective,
+        "gateNotes": gate_notes,
         "factId": fact_id,
         "strategyId": strategy_id,
         "strategyStatus": strategy_status,
@@ -630,6 +951,17 @@ def _episode_view(row: sqlite3.Row) -> dict:
         "resultCount": int(row["result_count"]),
         "evidenceCount": int(row["evidence_count"]),
         "corrected": bool(row["corrected"]),
+        "reflectionStatus": row["reflection_status"],
+        "reflectionSource": row["reflection_source"],
+        "reflectionDecision": row["reflection_decision"],
+        "requestedLayers": _load_json(row["reflection_requested_layers_json"], []),
+        "effectiveLayers": _load_json(row["reflection_layers_json"], []),
+        "gateNotes": _load_json(row["reflection_gate_notes_json"], []),
+        "reflectionReason": row["reflection_reason"],
+        "novelty": float(row["reflection_novelty"]),
+        "reusability": float(row["reflection_reusability"]),
+        "reflectionConfidence": float(row["reflection_confidence"]),
+        "reflectedAt": row["reflected_at"],
         "createdAt": row["created_at"],
     }
 
@@ -676,7 +1008,7 @@ def recall(
             "correction_count": item["correctionCount"],
         })
     return {
-        "version": "dbquill-layered-memory-v1",
+        "version": "dbquill-layered-memory-v2",
         "policy": policy_view(),
         "queryTokens": tokens[:16],
         "l1": {"matchedReferences": len(l2_ids) + len(l3_ids) + len(l4_ids)},
@@ -696,12 +1028,29 @@ def workspace(
 ) -> dict:
     with closing(_connect()) as conn:
         counts = {}
-        for key, table in (("l1", "memory_index"), ("l2", "memory_facts"), ("l3", "memory_strategies"), ("l4", "memory_episodes")):
+        for key, table in (("l1", "memory_index"), ("l2", "memory_facts"), ("l3", "memory_strategies")):
             row = conn.execute(
                 f"SELECT COUNT(*) AS count FROM {table} WHERE database_ref=? AND access_scope_ref=? AND schema_fingerprint=?",
                 (database_ref, access_scope_ref, schema_ref),
             ).fetchone()
             counts[key] = int(row["count"])
+        active_l4 = conn.execute(
+            """SELECT COUNT(*) AS count FROM memory_episodes WHERE database_ref=?
+               AND access_scope_ref=? AND schema_fingerprint=?
+               AND reflection_status NOT IN ('pending', 'failed', 'discarded')""",
+            (database_ref, access_scope_ref, schema_ref),
+        ).fetchone()
+        counts["l4"] = int(active_l4["count"])
+        reflection_rows = conn.execute(
+            """SELECT reflection_status, COUNT(*) AS count FROM memory_episodes
+               WHERE database_ref=? AND access_scope_ref=? AND schema_fingerprint=?
+               GROUP BY reflection_status""",
+            (database_ref, access_scope_ref, schema_ref),
+        ).fetchall()
+        reflection_counts = {
+            str(row["reflection_status"]): int(row["count"])
+            for row in reflection_rows
+        }
         stale = conn.execute(
             """SELECT COUNT(*) AS count FROM memory_episodes WHERE database_ref=?
                AND access_scope_ref=? AND schema_fingerprint<>?""",
@@ -725,10 +1074,11 @@ def workspace(
             (database_ref, access_scope_ref, schema_ref, int(limit)),
         ).fetchall()
     return {
-        "version": "dbquill-layered-memory-v1",
+        "version": "dbquill-layered-memory-v2",
         "policy": policy_view(),
         "schemaFingerprint": schema_ref,
         "counts": counts,
+        "reflectionCounts": reflection_counts,
         "staleEpisodeCount": int(stale["count"]),
         "facts": [_fact_view(row) for row in fact_rows],
         "strategies": [_strategy_view(row) for row in strategy_rows],

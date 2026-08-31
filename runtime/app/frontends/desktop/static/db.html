@@ -855,15 +855,16 @@
           </div>
         </div>
         <div class="memory-principle">
-          <span>EXECUTION → EPISODE → VERIFIED ROUTE → PROMOTED STRATEGY</span>
-          <p>工作检查点不属于长期层。只有真实完成的只读执行能强化记忆；纠错会降权，所有内容严格绑定当前数据库、授权范围和结构版本。</p>
+          <span>EXECUTION → MODEL REFLECTION → LOCAL GATE → MEMORY LAYERS</span>
+          <p>模型异步判断是否值得记忆并提议层级；本地证据门禁仍决定最终写入。L0 不可写，L1 由程序生成，失败或已纠错的事件不能进入 L2/L3。</p>
         </div>
+        <div class="memory-reflection-summary" id="memoryReflectionSummary" aria-live="polite"></div>
         <div class="memory-ledger" id="memoryLedger">
           <article class="memory-ledger-layer l0"><header><b>L0</b><div><strong>记忆宪章</strong><small>代码固定 · 不可写</small></div></header><div class="memory-layer-body" id="memoryPolicy"><div class="empty-tip">正在加载边界规则</div></div></article>
           <article class="memory-ledger-layer l1"><header><b>L1</b><div><strong>紧凑索引</strong><small id="memoryL1Count">0 个引用</small></div></header><div class="memory-layer-body"><p>只加载与当前问题相关的分层引用，不把完整历史塞进模型上下文。</p></div></article>
           <article class="memory-ledger-layer l2"><header><b>L2</b><div><strong>已验证路径事实</strong><small id="memoryL2Count">0 条</small></div></header><div class="memory-layer-body memory-object-list" id="memoryFacts"><div class="empty-tip">暂无执行验证的路径事实</div></div></article>
           <article class="memory-ledger-layer l3"><header><b>L3</b><div><strong>只读策略</strong><small id="memoryL3Count">0 条</small></div></header><div class="memory-layer-body memory-object-list" id="memoryStrategies"><div class="empty-tip">首次或每次纠错后取得 3 次成功证据才会晋级</div></div></article>
-          <article class="memory-ledger-layer l4"><header><b>L4</b><div><strong>执行片段</strong><small id="memoryL4Count">0 条</small></div></header><div class="memory-layer-body memory-object-list" id="memoryEpisodes"><div class="empty-tip">暂无脱敏执行记录</div></div></article>
+          <article class="memory-ledger-layer l4"><header><b>L4</b><div><strong>反思记录</strong><small id="memoryL4Count">0 条有效记忆</small></div></header><div class="memory-layer-body memory-object-list" id="memoryEpisodes"><div class="empty-tip">暂无脱敏执行记录</div></div></article>
         </div>
       </div>
     </section>
@@ -1997,6 +1998,11 @@ function addAnswerCard(res, sourceDbId = state.dbId, historyMode = false) {
       inner += '<div class="memory-layer ' + (layer.active ? 'active' : 'inactive') + '"><i></i><div><strong>' + esc(layer.label || layer.key || '记忆层') + '</strong><span>' + esc(layer.summary || '') + '</span></div><small>' + esc(layer.scope || '') + '</small></div>';
     });
     inner += '</div>';
+    const writeback = res.memory.writeback && typeof res.memory.writeback === 'object' ? res.memory.writeback : null;
+    if (writeback && writeback.stored) {
+      const reflectionState = writeback.reflectionQueued ? '已进入模型反思队列' : '反思待重试';
+      inner += '<div class="answer-memory-writeback"><b>本轮记忆</b><span>' + esc(reflectionState) + '</span><small>尚未代表已进入长期层；最终结果由模型提议与本地门禁共同决定</small></div>';
+    }
     const used = res.memory.used && typeof res.memory.used === 'object' ? res.memory.used : {};
     const usedItems = [];
     (Array.isArray(used.l2) ? used.l2 : []).forEach(item => usedItems.push({ layer: 'L2', title: (item.targetTables || []).join(' · ') || '路径事实', detail: memoryActions(item.actions), state: item.supportCount + ' 次支持' }));
@@ -3612,6 +3618,10 @@ function fillSelect(sel, items, placeholder) {
 /* ============ 分层记忆 ============ */
 var _memoryWorkspace = null;
 var _MEMORY_STATUS_LABELS = { candidate: '候选', promoted: '已晋级', disabled: '已停用', active: '有效' };
+var _MEMORY_REFLECTION_STATUS_LABELS = {
+  pending: '模型判断中', admitted: '已准入', partial: '部分准入',
+  l4_only: '仅 L4', discarded: '已舍弃', failed: '反思失败', legacy: '旧版记录',
+};
 var _MEMORY_ACTION_LABELS = {
   inspect_schema: '检查结构', search_schema: '搜索结构', search_values: '跨表查值',
   sample_rows: '抽样', find_relations: '检查关系', run_sql: '只读查询',
@@ -3624,14 +3634,30 @@ function memoryActions(items) {
 function memoryTables(items) {
   return (Array.isArray(items) && items.length) ? items.join(' · ') : '由当前问题重新绑定';
 }
+function memoryLayers(items) {
+  return (Array.isArray(items) && items.length) ? items.map(item => String(item).toUpperCase()).join(' + ') : '无';
+}
+function memoryScore(value) {
+  const score = Number(value);
+  return Number.isFinite(score) ? Math.round(Math.max(0, Math.min(1, score)) * 100) + '%' : '—';
+}
 function renderMemoryWorkspace(memory) {
   _memoryWorkspace = memory || null;
   $('#memoryClear').disabled = !memory || !roleCan('manage_memory');
   const counts = (memory && memory.counts) || {};
+  const reflectionCounts = (memory && memory.reflectionCounts) || {};
+  const admittedCount = (reflectionCounts.admitted || 0) + (reflectionCounts.partial || 0) + (reflectionCounts.l4_only || 0) + (reflectionCounts.legacy || 0);
+  const reflectionTotal = Object.keys(reflectionCounts).reduce((total, key) => total + (Number(reflectionCounts[key]) || 0), 0);
   $('#memoryL1Count').textContent = String(counts.l1 || 0) + ' 个引用';
   $('#memoryL2Count').textContent = String(counts.l2 || 0) + ' 条';
   $('#memoryL3Count').textContent = String(counts.l3 || 0) + ' 条';
-  $('#memoryL4Count').textContent = String(counts.l4 || 0) + ' 条';
+  $('#memoryL4Count').textContent = String(counts.l4 || 0) + ' 条有效记忆 · ' + String(reflectionTotal) + ' 条反思记录';
+  $('#memoryReflectionSummary').innerHTML = [
+    ['pending', '待判断', reflectionCounts.pending || 0],
+    ['admitted', '已准入', admittedCount],
+    ['discarded', '已舍弃', reflectionCounts.discarded || 0],
+    ['failed', '需重试', reflectionCounts.failed || 0],
+  ].map(item => `<span class="${item[0]}"><b>${esc(item[2])}</b><small>${esc(item[1])}</small></span>`).join('');
   $('#memoryBoundary').textContent = memory
     ? '当前数据库 · 当前授权 · 结构 ' + String(memory.schemaFingerprint || '').slice(0, 10)
       + (memory.staleEpisodeCount ? ' · ' + memory.staleEpisodeCount + ' 条旧结构记录未参与召回' : '')
@@ -3656,10 +3682,21 @@ function renderMemoryWorkspace(memory) {
     </article>`;
   }).join('') : '<div class="empty-tip">首次或每次纠错后取得 3 次成功证据才会晋级</div>';
   const episodes = memory && Array.isArray(memory.episodes) ? memory.episodes : [];
-  $('#memoryEpisodes').innerHTML = episodes.length ? episodes.map(item => `<details class="memory-object episode ${item.corrected ? 'corrected' : ''}">
-    <summary><div class="memory-object-title"><strong>${esc(item.questionPreview || '脱敏执行片段')}</strong><span>${item.corrected ? '已被纠错' : esc(item.outcome === 'succeeded' ? '成功' : '失败')}</span></div><small>${esc(auditTime(item.createdAt))}</small></summary>
-    <div class="memory-episode-detail"><p>${esc(memoryActions(item.actions))}</p><span>目标：${esc(memoryTables(item.targetTables))}</span><span>结果 ${esc(item.resultCount)} · 证据 ${esc(item.evidenceCount)}</span></div>
-  </details>`).join('') : '<div class="empty-tip">暂无脱敏执行记录</div>';
+  $('#memoryEpisodes').innerHTML = episodes.length ? episodes.map(item => {
+    const status = String(item.reflectionStatus || 'legacy');
+    const statusLabel = _MEMORY_REFLECTION_STATUS_LABELS[status] || status;
+    const questionLabel = status === 'discarded' ? '已舍弃的脱敏事件' : (item.questionPreview || '脱敏执行片段');
+    const reason = item.reflectionReason || (status === 'pending' ? '正在异步评估长期价值和可复用层级。' : (status === 'failed' ? '本次模型反思未完成，数据库回答不受影响。' : '无补充理由。'));
+    const gateNotes = Array.isArray(item.gateNotes) ? item.gateNotes : [];
+    const retry = status === 'failed' ? `<button class="btn memory-reflection-retry" data-episode-id="${esc(item.id)}" ${roleCan('manage_memory') ? '' : 'disabled'}>重试模型反思</button>` : '';
+    const scores = ['pending', 'failed', 'legacy'].includes(status) ? '' : `<div class="memory-reflection-scores"><span>新颖度 <b>${esc(memoryScore(item.novelty))}</b></span><span>可复用 <b>${esc(memoryScore(item.reusability))}</b></span><span>置信度 <b>${esc(memoryScore(item.reflectionConfidence))}</b></span></div>`;
+    return `<details class="memory-object episode ${item.corrected ? 'corrected' : ''} reflection-${esc(status)}">
+      <summary><div class="memory-object-title"><strong>${esc(questionLabel)}</strong><span class="memory-status reflection ${esc(status)}">${esc(statusLabel)}</span></div><small>${esc(auditTime(item.createdAt))}</small></summary>
+      <div class="memory-episode-detail"><div class="memory-episode-evidence"><p>${esc(memoryActions(item.actions))}</p><span>目标：${esc(memoryTables(item.targetTables))}</span><span>结果 ${esc(item.resultCount)} · 证据 ${esc(item.evidenceCount)}${item.corrected ? ' · 已被纠错' : ''}</span></div>
+        <section class="memory-reflection-note"><header><strong>模型反思</strong><small>${esc(statusLabel)}</small></header><p>${esc(reason)}</p><div class="memory-reflection-path"><span>模型建议 <b>${esc(memoryLayers(item.requestedLayers))}</b></span><i>→</i><span>实际写入 <b>${esc(memoryLayers(item.effectiveLayers))}</b></span></div>${scores}${gateNotes.length ? '<ul>' + gateNotes.map(note => '<li>' + esc(note) + '</li>').join('') + '</ul>' : ''}${retry}</section>
+      </div>
+    </details>`;
+  }).join('') : '<div class="empty-tip">暂无脱敏执行记录</div>';
 }
 async function loadMemoryWorkspace() {
   if (!state.dbId) { renderMemoryWorkspace(null); return; }
@@ -3681,6 +3718,16 @@ async function toggleMemoryStrategy(strategyId, enabled) {
     toast(enabled ? '策略已恢复；未达到门槛时仍保持候选' : '策略已停用');
   } catch (e) { toast('更新失败：' + e.message); }
 }
+async function retryMemoryReflection(episodeId) {
+  if (!state.dbId || !roleCan('manage_memory')) return;
+  try {
+    await api('/db/memory/episodes/' + encodeURIComponent(episodeId) + '/reflect', {
+      method: 'POST', body: JSON.stringify({ dbId: state.dbId, llmCfg: state.llmCfg || 'default' }),
+    });
+    await loadMemoryWorkspace();
+    toast('已重新加入模型反思队列');
+  } catch (e) { toast('重试失败：' + e.message); }
+}
 async function clearMemoryWorkspace() {
   if (!state.dbId || !roleCan('manage_memory')) return;
   if (!uiConfirm('清空当前数据库、当前授权范围和当前结构版本下的 L1–L4 记忆？会话与审计记录不会删除。')) return;
@@ -3695,6 +3742,10 @@ $('#memoryClear').onclick = clearMemoryWorkspace;
 $('#memoryStrategies').onclick = event => {
   const button = event.target.closest('.memory-strategy-toggle');
   if (button) toggleMemoryStrategy(button.dataset.strategyId, button.dataset.enabled === 'true');
+};
+$('#memoryEpisodes').onclick = event => {
+  const button = event.target.closest('.memory-reflection-retry');
+  if (button) retryMemoryReflection(button.dataset.episodeId);
 };
 
 /* ============ 语义目录 ============ */

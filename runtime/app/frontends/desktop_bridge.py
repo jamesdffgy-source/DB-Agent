@@ -7,7 +7,7 @@
 """
 from __future__ import annotations
 
-import asyncio, contextlib, contextvars, hashlib, hmac, json, math, os, re, secrets, sys
+import asyncio, contextlib, contextvars, hashlib, hmac, json, math, os, queue, re, secrets, sys
 import threading, time, traceback, uuid
 from datetime import datetime
 from pathlib import Path
@@ -40,6 +40,14 @@ try:
     _memory_store.init_db()
 except Exception:
     _memory_store = None
+
+_MEMORY_REFLECTION_BACKGROUND_ENABLED = (
+    str(os.environ.get("DBQUILL_MEMORY_REFLECTION_BACKGROUND", "1")).strip().lower()
+    not in {"0", "false", "off", "no"}
+)
+_MEMORY_REFLECTION_QUEUE: "queue.Queue[dict]" = queue.Queue(maxsize=64)
+_MEMORY_REFLECTION_WORKER_LOCK = threading.Lock()
+_MEMORY_REFLECTION_WORKER_STARTED = False
 try:
     import db_identity_store as _identity_store
     _identity_store.init_db()
@@ -2052,6 +2060,137 @@ def _db_memory_context(db_id: str, question: str, agent: Any) -> dict:
         return {}
 
 
+def _memory_reflection_process(task: dict) -> None:
+    """Run one model reflection outside the answer latency path."""
+    if _memory_store is None:
+        return
+    episode_id = str(task.get("episode_id") or "")
+    db_id = str(task.get("db_id") or "")
+    boundary = {
+        "database_ref": str(task.get("database_ref") or ""),
+        "access_scope_ref": str(task.get("access_scope_ref") or ""),
+        "schema_ref": str(task.get("schema_ref") or ""),
+    }
+    correlation_id = f"memory-reflect-{episode_id[:20]}"
+    approved_audit = False
+    try:
+        metadata = _memory_store.reflection_payload(episode_id, **boundary)
+        if metadata.get("reflection_status") != "pending":
+            return
+        core = _db_agent_core()
+        cancel_event = threading.Event()
+        timer = threading.Timer(60.0, cancel_event.set)
+        timer.daemon = True
+        timer.start()
+        try:
+            with core.cancellation_scope(cancel_event):
+                proposal = core.MemoryReflector(
+                    llm_cfg=str(task.get("llm_cfg") or "default"),
+                ).reflect(metadata)
+        finally:
+            timer.cancel()
+        proposed_layers = [
+            str(item) for item in (proposal.get("target_layers") or [])[:6]
+        ]
+        _audit_append(
+            db_id,
+            category="memory_change",
+            action="reflect",
+            outcome="approved",
+            summary="模型记忆反思提议已进入本地准入门禁",
+            risk="low",
+            correlation_id=correlation_id,
+            details={
+                "memory_ref": _audit_ref(episode_id),
+                "memory_layer": ",".join(proposed_layers) or "discard",
+                "memory_status": "proposed",
+            },
+            strict=True,
+        )
+        approved_audit = True
+        result = _memory_store.apply_reflection(
+            episode_id, proposal, **boundary,
+        )
+        _audit_append(
+            db_id,
+            category="memory_change",
+            action="reflect",
+            outcome="succeeded",
+            summary="模型记忆反思已由本地门禁处理",
+            risk="low",
+            correlation_id=correlation_id,
+            details={
+                "memory_ref": _audit_ref(episode_id),
+                "memory_layer": ",".join(result.get("effectiveLayers") or []) or "none",
+                "memory_status": str(result.get("reflectionStatus") or "unknown"),
+            },
+        )
+    except Exception as exc:
+        with contextlib.suppress(Exception):
+            _memory_store.mark_reflection_failed(
+                episode_id, reason=type(exc).__name__, **boundary,
+            )
+        with contextlib.suppress(Exception):
+            _audit_append(
+                db_id,
+                category="memory_change",
+                action="reflect",
+                outcome="failed",
+                summary=(
+                    "模型记忆反思未完成本地准入"
+                    if approved_audit else "模型记忆反思未生成有效提议"
+                ),
+                risk="low",
+                correlation_id=correlation_id,
+                details={
+                    "memory_ref": _audit_ref(episode_id),
+                    "memory_layer": "none",
+                    "memory_status": "failed",
+                    "reflection_stage": "admission" if approved_audit else "proposal",
+                    "error_type": type(exc).__name__,
+                },
+            )
+
+
+def _memory_reflection_worker() -> None:
+    while True:
+        task = _MEMORY_REFLECTION_QUEUE.get()
+        try:
+            _memory_reflection_process(task)
+        finally:
+            _MEMORY_REFLECTION_QUEUE.task_done()
+
+
+def _memory_reflection_schedule(task: dict) -> bool:
+    global _MEMORY_REFLECTION_WORKER_STARTED
+    if not _MEMORY_REFLECTION_BACKGROUND_ENABLED or _memory_store is None:
+        return False
+    with _MEMORY_REFLECTION_WORKER_LOCK:
+        if not _MEMORY_REFLECTION_WORKER_STARTED:
+            threading.Thread(
+                target=_memory_reflection_worker,
+                daemon=True,
+                name="DBMemoryReflector",
+            ).start()
+            _MEMORY_REFLECTION_WORKER_STARTED = True
+    try:
+        _MEMORY_REFLECTION_QUEUE.put_nowait(dict(task))
+        return True
+    except queue.Full:
+        boundary = {
+            "database_ref": str(task.get("database_ref") or ""),
+            "access_scope_ref": str(task.get("access_scope_ref") or ""),
+            "schema_ref": str(task.get("schema_ref") or ""),
+        }
+        with contextlib.suppress(Exception):
+            _memory_store.mark_reflection_failed(
+                str(task.get("episode_id") or ""),
+                reason="reflection_queue_full",
+                **boundary,
+            )
+        return False
+
+
 def _db_memory_record(
     run_id: str,
     db_id: str,
@@ -2066,11 +2205,14 @@ def _db_memory_record(
     entry = _db_entry_unchecked(db_id)
     if not entry:
         return {"stored": False, "reason": "database_detached"}
+    database_ref = _database_scope_ref(entry)
+    access_scope_ref = _current_access_scope_ref(entry)
+    schema_ref = _memory_store.schema_fingerprint(agent.schema)
     try:
         result = _memory_store.record_episode(
-            database_ref=_database_scope_ref(entry),
-            access_scope_ref=_current_access_scope_ref(entry),
-            schema_ref=_memory_store.schema_fingerprint(agent.schema),
+            database_ref=database_ref,
+            access_scope_ref=access_scope_ref,
+            schema_ref=schema_ref,
             session_id=sid,
             run_id=run_id,
             question=question,
@@ -2078,17 +2220,44 @@ def _db_memory_record(
         )
     except Exception:
         return {"stored": False, "reason": "writeback_failed"}
-    memory = getattr(answer, "memory", None)
+    reflection_queued = False
+    if result.get("stored") and result.get("episodeId"):
+        reflection_queued = _memory_reflection_schedule({
+            "episode_id": result["episodeId"],
+            "db_id": db_id,
+            "database_ref": database_ref,
+            "access_scope_ref": access_scope_ref,
+            "schema_ref": schema_ref,
+            "llm_cfg": getattr(agent, "llm_cfg", None) or getattr(agent, "_llm_cfg", None),
+        })
+        if not reflection_queued:
+            with contextlib.suppress(Exception):
+                failed = _memory_store.mark_reflection_failed(
+                    result["episodeId"],
+                    database_ref=database_ref,
+                    access_scope_ref=access_scope_ref,
+                    schema_ref=schema_ref,
+                    reason="reflection_background_unavailable",
+                )
+                if failed:
+                    result["reflectionStatus"] = "failed"
+    result["reflectionQueued"] = reflection_queued
+    memory = answer.get("memory") if isinstance(answer, dict) else getattr(answer, "memory", None)
     if isinstance(memory, dict):
         memory["writeback"] = {
             "stored": bool(result.get("stored")),
-            "strategyStatus": result.get("strategyStatus"),
+            "reflectionStatus": result.get("reflectionStatus"),
+            "reflectionQueued": reflection_queued,
             "correctedPrevious": bool(result.get("correctedEpisodeId")),
         }
         if result.get("stored"):
             for layer in memory.get("layers") or []:
                 if isinstance(layer, dict) and layer.get("key") == "l4":
-                    layer["summary"] = str(layer.get("summary") or "") + "；本轮执行完成后已追加 1 条"
+                    suffix = (
+                        "；本轮已进入模型反思队列"
+                        if reflection_queued else "；本轮模型反思待重试"
+                    )
+                    layer["summary"] = str(layer.get("summary") or "") + suffix
                     break
     return result
 
@@ -3544,6 +3713,49 @@ async def db_memory_strategy_handler(request):
         return json_ok({"ok": False, "error": str(exc)}, status=404)
     except Exception as exc:
         return json_ok({"ok": False, "error": f"更新记忆策略失败：{exc}"}, status=500)
+
+
+async def db_memory_episode_reflect_handler(request):
+    """POST /db/memory/episodes/{id}/reflect — retry one failed reflection."""
+    episode_id = str(request.match_info.get("episode_id") or "").strip()
+    data = await read_json(request)
+    db_id = str(data.get("dbId") or "").strip()
+    llm_cfg = str(data.get("llmCfg") or "").strip()[:64]
+    try:
+        _entry, _agent, database_ref, access_ref, schema_ref = _db_memory_boundary(db_id)
+        queued = _memory_store.prepare_reflection_retry(
+            episode_id,
+            database_ref=database_ref,
+            access_scope_ref=access_ref,
+            schema_ref=schema_ref,
+        )
+        scheduled = _memory_reflection_schedule({
+            "episode_id": episode_id,
+            "db_id": db_id,
+            "database_ref": database_ref,
+            "access_scope_ref": access_ref,
+            "schema_ref": schema_ref,
+            "llm_cfg": llm_cfg or "default",
+        })
+        if not scheduled:
+            _memory_store.mark_reflection_failed(
+                episode_id,
+                database_ref=database_ref,
+                access_scope_ref=access_ref,
+                schema_ref=schema_ref,
+                reason="reflection_background_unavailable",
+            )
+            return json_ok({
+                "ok": False,
+                "error": "模型反思后台任务不可用",
+            }, status=503)
+        return json_ok({"ok": True, "reflection": queued})
+    except LookupError as exc:
+        return json_ok({"ok": False, "error": str(exc)}, status=404)
+    except ValueError as exc:
+        return json_ok({"ok": False, "error": str(exc)}, status=409)
+    except Exception as exc:
+        return json_ok({"ok": False, "error": f"重试模型反思失败：{exc}"}, status=500)
 
 
 async def db_semantics_handler(request):
@@ -5140,6 +5352,10 @@ def create_app():
     app.router.add_get("/db/memory", db_memory_handler)
     app.router.add_delete("/db/memory", db_memory_handler)
     app.router.add_post("/db/memory/strategies/{strategy_id}", db_memory_strategy_handler)
+    app.router.add_post(
+        "/db/memory/episodes/{episode_id}/reflect",
+        db_memory_episode_reflect_handler,
+    )
     app.router.add_get("/db/semantics", db_semantics_handler)
     app.router.add_post("/db/semantics", db_semantics_handler)
     app.router.add_delete("/db/semantics/{semantic_id}", db_semantics_delete_handler)
